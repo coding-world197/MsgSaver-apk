@@ -25,8 +25,8 @@ fun formatTime(ms: Long): String {
         a.get(Calendar.YEAR) == b.get(Calendar.YEAR) && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
     val time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(ms))
     return when {
-        same(now, t) -> "Aaj, $time"
-        same(y, t) -> "Kal, $time"
+        same(now, t) -> "Today, $time"
+        same(y, t) -> "Yesterday, $time"
         else -> SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(ms))
     }
 }
@@ -49,7 +49,7 @@ fun openFile(ctx: Context, path: String) {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         ctx.startActivity(i)
     } catch (e: ActivityNotFoundException) {
-        Toast.makeText(ctx, "Is file ko kholne wali app nahi mili", Toast.LENGTH_SHORT).show()
+        Toast.makeText(ctx, "No app found to open this file", Toast.LENGTH_SHORT).show()
     }
 }
 

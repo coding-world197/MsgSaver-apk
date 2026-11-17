@@ -121,7 +121,7 @@ fun Pill(text: String, onClick: () -> Unit) {
 fun StatusChip(ok: Boolean) {
     val cs = MaterialTheme.colorScheme
     Text(
-        if (ok) "✅ Ready" else "⚠ Baaki",
+        if (ok) "✅ Ready" else "⚠ Pending",
         fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
         color = if (ok) cs.onPrimaryContainer else cs.onErrorContainer,
         modifier = Modifier.clip(RoundedCornerShape(50))

@@ -105,12 +105,12 @@ fun Root() {
     update?.let { u ->
         AlertDialog(
             onDismissRequest = { update = null },
-            title = { Text("Naya update available ✨") },
+            title = { Text("New update available ✨") },
             text = {
                 Text(
-                    "Version ${u.name} aa gaya hai." +
+                    "Version ${u.name} is available." +
                         (if (u.notes.isNotBlank()) "\n\n" + u.notes.take(300) else "") +
-                        "\n\nDownload ke baad file par tap karke install karo. Aapka data safe rahega."
+                        "\n\nAfter downloading, tap the file to install it. Your data will stay safe."
                 )
             },
             confirmButton = {
@@ -119,7 +119,7 @@ fun Root() {
                     update = null
                 }) { Text("Download") }
             },
-            dismissButton = { TextButton(onClick = { update = null }) { Text("Baad me") } }
+            dismissButton = { TextButton(onClick = { update = null }) { Text("Later") } }
         )
     }
 }
@@ -130,9 +130,9 @@ fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
     val deleted = messages.count { it.isDeleted }
     val subtitle = when (tab) {
         0 -> "${messages.size} saved  •  $deleted deleted"
-        1 -> "Dekhe hue status safe rakho"
-        2 -> "Voice messages dobara suno"
-        else -> "Setup aur options"
+        1 -> "Keep the statuses you have viewed"
+        2 -> "Listen to voice messages again"
+        else -> "Setup and options"
     }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -164,19 +164,19 @@ fun SetupWizard(onSkip: () -> Unit) {
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).navigationBarsPadding()
     ) {
-        AppHeader("Msg Saver", "Bas 3 chhote steps")
+        AppHeader("Msg Saver", "Just 3 quick steps")
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Shuru karne se pehle", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text("Before you start", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Text(
-                "Har step ka button dabao, wahan switch ON karo aur wapas aao. App khud agla step dikha degi.",
+                "Tap each step’s button, turn the switch on and come back. The app will show the next step by itself.",
                 fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             SetupSteps()
             TextButton(onClick = onSkip, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                Text("Baad me karunga")
+                Text("I’ll do it later")
             }
         }
     }
@@ -208,14 +208,14 @@ fun MessagesScreen(all: List<SavedMessage>) {
             item {
                 AppCard(container = MaterialTheme.colorScheme.errorContainer) {
                     Column(Modifier.padding(16.dp)) {
-                        Text("Notification access band hai", fontWeight = FontWeight.Bold,
+                        Text("Notification access is off", fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onErrorContainer)
-                        Text("Messages save karne ke liye isse allow karna zaroori hai.",
+                        Text("You need to allow this to save messages.",
                             color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 14.sp)
                         Spacer(Modifier.height(8.dp))
                         Button(onClick = {
                             ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                        }) { Text("Allow karo") }
+                        }) { Text("Allow") }
                     }
                 }
             }
@@ -223,7 +223,7 @@ fun MessagesScreen(all: List<SavedMessage>) {
         item {
             OutlinedTextField(
                 value = query, onValueChange = { query = it }, singleLine = true,
-                placeholder = { Text("Message ya naam search karo") },
+                placeholder = { Text("Search by message or name") },
                 leadingIcon = { Text("🔍") },
                 shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
             )
@@ -231,7 +231,7 @@ fun MessagesScreen(all: List<SavedMessage>) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = !onlyDeleted, onClick = { onlyDeleted = false },
-                    label = { Text("Sab (${all.size})") })
+                    label = { Text("All (${all.size})") })
                 FilterChip(selected = onlyDeleted, onClick = { onlyDeleted = true },
                     label = { Text("🗑 Deleted ($delCount)") })
             }
@@ -240,8 +240,8 @@ fun MessagesScreen(all: List<SavedMessage>) {
             item {
                 EmptyState(
                     if (onlyDeleted) "🗑" else "💬",
-                    if (onlyDeleted) "Abhi koi deleted message nahi" else "Abhi koi message nahi",
-                    "Jab koi WhatsApp message bhejega, wo yahan save ho jayega. Delete hone par bhi yahan dikhega."
+                    if (onlyDeleted) "No deleted messages yet" else "No messages yet",
+                    "When someone sends you a WhatsApp message, it is saved here. It stays here even if it gets deleted."
                 )
             }
         }
@@ -274,7 +274,7 @@ fun MessageBubble(m: SavedMessage) {
                 Text(m.text, color = if (m.isDeleted) cs.onErrorContainer else cs.onSurface)
                 if (m.isDeleted) {
                     Spacer(Modifier.height(6.dp))
-                    Text("🗑 Sender ne ye message delete kiya", fontSize = 12.sp,
+                    Text("🗑 The sender deleted this message", fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold, color = cs.error)
                 }
             }
@@ -308,7 +308,7 @@ fun StatusScreen() {
                 if (!ready) {
                     AppCard(container = MaterialTheme.colorScheme.errorContainer) {
                         Text(
-                            "Pehle Settings me WhatsApp folder ka access do.",
+                            "First give access to the WhatsApp folder in Settings.",
                             Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onErrorContainer
                         )
                     }
@@ -317,13 +317,13 @@ fun StatusScreen() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("${files.size} status saved", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text("Status pehle WhatsApp me dekho, phir yahan aayega.",
+                        Text("View a status in WhatsApp first, then it will appear here.",
                             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     FilledTonalButton(onClick = {
                         scope.launch {
                             val n = Scanner.run(ctx)
-                            Toast.makeText(ctx, "$n naye status save hue", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(ctx, "$n new statuses saved", Toast.LENGTH_SHORT).show()
                         }
                     }) { Text("🔄 Refresh") }
                 }
@@ -331,8 +331,8 @@ fun StatusScreen() {
         }
         if (files.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                EmptyState("🖼", "Abhi koi status nahi",
-                    "WhatsApp me kisi ka status kholkar dekho, phir Refresh dabao.")
+                EmptyState("🖼", "No statuses yet",
+                    "Open someone’s status in WhatsApp, then tap Refresh.")
             }
         }
         items(files, key = { it.id }) { StatusItem(it, loader) }
@@ -376,7 +376,7 @@ fun StatusItem(f: BackupFile, loader: ImageLoader) {
             Pill("⬇ Save") {
                 scope.launch {
                     val ok = withContext(Dispatchers.IO) { saveToGallery(ctx, f) }
-                    Toast.makeText(ctx, if (ok) "Gallery me save ho gaya" else "Save nahi hua", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(ctx, if (ok) "Saved to gallery" else "Couldn’t save", Toast.LENGTH_SHORT).show()
                 }
             }
             Pill("🗑") {
@@ -406,15 +406,15 @@ fun VoiceScreen() {
             Column {
                 Text("${files.size} voice messages saved", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    "Sirf wo jo monitoring on hone ke baad aaye. WhatsApp me auto-download on hona chahiye.",
+                    "Only voice messages received after monitoring started. Auto-download must be on in WhatsApp.",
                     fontSize = 12.sp, color = cs.onSurfaceVariant
                 )
             }
         }
         if (files.isEmpty()) {
             item {
-                EmptyState("🎤", "Abhi koi voice message nahi",
-                    "Naye voice messages aate hi yahan save ho jayenge.")
+                EmptyState("🎤", "No voice messages yet",
+                    "New voice messages are saved here as soon as they arrive.")
             }
         }
         items(files, key = { it.id }) { f ->
@@ -471,7 +471,7 @@ fun rememberFolderPicker(onDone: () -> Unit): (Boolean) -> Unit {
                 )
             Toast.makeText(
                 ctx,
-                if (looksRight) "Folder sahi hai ✅" else "Ye WhatsApp ka Media folder nahi lag raha. Dobara choose karo.",
+                if (looksRight) "Folder looks right ✅" else "This doesn’t look like WhatsApp’s Media folder. Please choose again.",
                 Toast.LENGTH_LONG
             ).show()
             onDone()
@@ -502,7 +502,7 @@ fun SetupSteps() {
         AppCard(container = cs.primaryContainer) {
             Column(Modifier.padding(16.dp)) {
                 Text(
-                    if (readyCount == 3) "Sab ready hai 🎉" else "Setup: $readyCount/3 ready",
+                    if (readyCount == 3) "All set 🎉" else "Setup: $readyCount/3 ready",
                     fontWeight = FontWeight.Bold, fontSize = 18.sp, color = cs.onPrimaryContainer
                 )
                 Spacer(Modifier.height(8.dp))
@@ -515,12 +515,12 @@ fun SetupSteps() {
         }
 
         SetupCard(
-            1, "Messages padhne ki ijazat", notifOk,
-            "Deleted messages save karne ke liye. Agar 'App was denied access' aaye: App info > upar right ⋮ > 'Allow restricted settings', phir wapas aao.",
+            1, "Permission to read messages", notifOk,
+            "Needed to save deleted messages. If you see ‘App was denied access’: App info > ⋮ (top right) > ‘Allow restricted settings’, then come back.",
             highlight = current == 0
         ) {
             Button(onClick = { ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) {
-                Text("Allow karo")
+                Text("Allow")
             }
             Spacer(Modifier.width(8.dp))
             OutlinedButton(onClick = {
@@ -532,21 +532,21 @@ fun SetupSteps() {
 
         val filesHelp = when {
             Build.VERSION.SDK_INT >= 30 && !allFiles ->
-                "Status aur voice messages ke liye. Bas ek switch ON karo (All files access)."
+                "For statuses and voice messages. Just turn on one switch (All files access)."
             Build.VERSION.SDK_INT >= 30 && !filesOk ->
-                "Access mil gaya, par WhatsApp ka folder nahi mila. 'Folder chuno' dabao aur 'Media' folder select karo."
-            Build.VERSION.SDK_INT >= 30 -> "Access mil gaya ✅ WhatsApp aur Business dono scan honge."
-            else -> "Folder chuno: khulne wali screen me neeche 'Use this folder' dabao. Folder ka naam 'Media' hona chahiye."
+                "Access granted, but WhatsApp’s folder wasn’t found. Tap ‘Choose folder’ and select the ‘Media’ folder."
+            Build.VERSION.SDK_INT >= 30 -> "Access granted ✅ Both WhatsApp and Business will be scanned."
+            else -> "Choose a folder: on the screen that opens, tap ‘Use this folder’ at the bottom. The folder must be named ‘Media’."
         }
-        SetupCard(2, "Status aur voice files", filesOk, filesHelp, highlight = current == 1) {
+        SetupCard(2, "Status and voice files", filesOk, filesHelp, highlight = current == 1) {
             if (Build.VERSION.SDK_INT >= 30) {
                 Button(onClick = {
                     ctx.startActivity(
                         Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${ctx.packageName}"))
                     )
-                }) { Text("Allow karo") }
+                }) { Text("Allow") }
                 Spacer(Modifier.width(8.dp))
-                TextButton(onClick = { picker(false) }) { Text("Folder chuno") }
+                TextButton(onClick = { picker(false) }) { Text("Choose folder") }
             } else {
                 Button(onClick = { picker(false) }) { Text("WhatsApp") }
                 Spacer(Modifier.width(8.dp))
@@ -555,15 +555,15 @@ fun SetupSteps() {
         }
 
         SetupCard(
-            3, "Background me chalne do", batteryOk,
-            "Warna phone app ko band kar dega aur naye messages miss ho jayenge.",
+            3, "Allow background running", batteryOk,
+            "Otherwise your phone may stop the app and new messages will be missed.",
             highlight = current == 2
         ) {
             Button(onClick = {
                 ctx.startActivity(
                     Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}"))
                 )
-            }) { Text("Allow karo") }
+            }) { Text("Allow") }
         }
     }
 }
@@ -583,9 +583,9 @@ fun SettingsScreen() {
 
         AppCard {
             Column(Modifier.padding(16.dp)) {
-                Text("Deleted message ka text", fontWeight = FontWeight.Bold)
+                Text("Deleted-message text", fontWeight = FontWeight.Bold)
                 Text(
-                    "Agar WhatsApp Hindi/Urdu ya kisi aur language me hai, to deleted message ka text yahan likho.",
+                    "If WhatsApp is set to another language, enter the text it shows for a deleted message here.",
                     fontSize = 12.sp, color = cs.onSurfaceVariant
                 )
                 Spacer(Modifier.height(8.dp))
@@ -607,16 +607,16 @@ fun SettingsScreen() {
                     scope.launch {
                         val u = Updater.latest()
                         val msg = when {
-                            u == null -> "Update check nahi ho saka (internet ya release nahi mila)"
-                            u.versionCode > currentVersionCode(ctx) -> "Naya version ${u.name} available hai"
-                            else -> "Aap latest version par ho ✅"
+                            u == null -> "Couldn’t check for updates (no internet or no release found)"
+                            u.versionCode > currentVersionCode(ctx) -> "New version ${u.name} is available"
+                            else -> "You’re on the latest version ✅"
                         }
                         Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
                         if (u != null && u.versionCode > currentVersionCode(ctx)) {
                             ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         }
                     }
-                }) { Text("🔄 Update check karo") }
+                }) { Text("🔄 Check for updates") }
             }
         }
 
@@ -627,25 +627,25 @@ fun SettingsScreen() {
                 FilledTonalButton(onClick = {
                     scope.launch {
                         val n = Scanner.run(ctx)
-                        Toast.makeText(ctx, "$n nayi files save hui", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx, "$n new files saved", Toast.LENGTH_SHORT).show()
                     }
-                }) { Text("Abhi scan karo") }
+                }) { Text("Scan now") }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = {
                     scope.launch(Dispatchers.IO) { AppDb.get(ctx).dao().clearMessages() }
-                }) { Text("Saare messages delete karo") }
+                }) { Text("Delete all messages") }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = {
                     scope.launch(Dispatchers.IO) {
                         File(ctx.filesDir, "backup").deleteRecursively()
                         AppDb.get(ctx).dao().clearFiles()
                     }
-                }) { Text("Saare status/voice delete karo") }
+                }) { Text("Delete all statuses and voice messages") }
             }
         }
 
         Text(
-            "Privacy: messages, status aur voice sirf aapke phone me rehte hain. Internet sirf naya version check karne ke liye use hota hai. Ye app WhatsApp se alag hai aur uska koi hissa nahi.",
+            "Privacy: your messages, statuses and voice messages stay on your phone. The internet is used only to check for a new version. This app is separate from WhatsApp and is not part of it.",
             fontSize = 12.sp, color = cs.onSurfaceVariant
         )
         Spacer(Modifier.height(8.dp))
