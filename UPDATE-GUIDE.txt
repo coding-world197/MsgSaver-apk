@@ -1,0 +1,30 @@
+MsgSaver v1.1 - kya badla
+- Naya UI (dark mode ke saath), logo, update checker
+- Signed release build + GitHub Release (update ek hi link se milega)
+
+GITHUB PAR UPDATE KAISE DAALEIN
+1. Repository me "app" folder dobara upload karo (purani files replace ho jayengi).
+2. .github/workflows/build.yml ko naye build.yml se replace karo (file kholo > pencil > paste > Commit).
+
+EK BAAR KA SIGNING SETUP (sirf pehli baar)
+A. Repo ko PRIVATE karo (Settings > General > Danger zone > Change visibility).
+B. Actions tab > "Build APK" > Run workflow > mode = keystore, password = koi 8+ letters/numbers likho > Run.
+C. Run khatam hone par neeche Artifacts me "msgsaver-keystore" download karo. Zip me:
+     msgsaver.jks          -> ise Google Drive/pen drive me SAFE rakho (gum hui to update nahi de paoge)
+     keystore_base64.txt   -> iska poora text copy karo
+D. Repo > Settings > Secrets and variables > Actions > New repository secret. 4 secrets banao:
+     KEYSTORE_BASE64   = keystore_base64.txt ka text
+     KEYSTORE_PASSWORD = wahi password jo step B me likha
+     KEY_ALIAS         = msgsaver
+     KEY_PASSWORD      = wahi password
+E. Actions me run ke Artifacts ka "msgsaver-keystore" DELETE kar do (trash icon).
+F. Repo ko wapas PUBLIC karo (taaki website se download aur app ka update check chale).
+
+HAR UPDATE KA TAREEKA
+1. app/build.gradle.kts me versionCode ko 1 se badhao (2 -> 3 -> 4) aur versionName badlo.
+2. Code upload/commit karo. Build apne aap chalega aur GitHub Release ban jayegi.
+3. Website ka download link (hamesha latest APK):
+   https://github.com/coding-world197/MSG-server/releases/latest/download/MsgSaver.apk
+4. Jin logon ke phone me app hai, unhe app khulte hi "Naya update" popup milega.
+
+NOTE: applicationId (com.example.msgsaver) kabhi mat badlo.
