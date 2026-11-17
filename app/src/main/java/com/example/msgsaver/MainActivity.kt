@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
@@ -14,6 +15,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -64,10 +66,13 @@ fun hasNotificationAccess(ctx: Context): Boolean {
     return flat.contains(ComponentName(ctx, WhatsAppListener::class.java).flattenToString())
 }
 
-fun folderReady(ctx: Context): Boolean {
-    val s = Prefs.get(ctx).getString("tree", null) ?: return false
-    return DocumentFile.fromTreeUri(ctx, Uri.parse(s))?.canRead() == true
-}
+fun folderReady(ctx: Context): Boolean = directRoots().isNotEmpty() || safRoot(ctx) != null
+
+fun batteryReady(ctx: Context): Boolean =
+    (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(ctx.packageName)
+
+fun allSetupReady(ctx: Context): Boolean =
+    hasNotificationAccess(ctx) && folderReady(ctx) && batteryReady(ctx)
 
 /* ------------------------------ ROOT ------------------------------ */
 
@@ -78,43 +83,23 @@ fun Root() {
     val messages by dao.messages().collectAsState(initial = emptyList())
     var tab by remember { mutableIntStateOf(0) }
     var update by remember { mutableStateOf<UpdateInfo?>(null) }
+    var tick by remember { mutableIntStateOf(0) }
+    var skipped by remember { mutableStateOf(Prefs.get(ctx).getBoolean("setup_skipped", false)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
+    val allReady = remember(tick) { allSetupReady(ctx) }
 
     LaunchedEffect(Unit) {
         val u = Updater.latest()
         if (u != null && u.versionCode > currentVersionCode(ctx)) update = u
     }
 
-    val tabs = listOf("💬" to "Messages", "🖼" to "Status", "🎤" to "Voice", "⚙" to "Settings")
-    val deleted = messages.count { it.isDeleted }
-    val subtitle = when (tab) {
-        0 -> "${messages.size} saved  •  $deleted deleted"
-        1 -> "Dekhe hue status safe rakho"
-        2 -> "Voice messages dobara suno"
-        else -> "Setup aur options"
-    }
-
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = { AppHeader("Msg Saver", subtitle) },
-        bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                tabs.forEachIndexed { i, (emoji, label) ->
-                    NavigationBarItem(
-                        selected = tab == i, onClick = { tab = i },
-                        icon = { Text(emoji, fontSize = 20.sp) }, label = { Text(label) }
-                    )
-                }
-            }
-        }
-    ) { pad ->
-        Box(Modifier.padding(pad).fillMaxSize()) {
-            when (tab) {
-                0 -> MessagesScreen(messages)
-                1 -> StatusScreen()
-                2 -> VoiceScreen()
-                else -> SettingsScreen()
-            }
-        }
+    if (!allReady && !skipped) {
+        SetupWizard(onSkip = {
+            skipped = true
+            Prefs.get(ctx).edit().putBoolean("setup_skipped", true).apply()
+        })
+    } else {
+        MainScaffold(messages, tab) { tab = it }
     }
 
     update?.let { u ->
@@ -136,6 +121,64 @@ fun Root() {
             },
             dismissButton = { TextButton(onClick = { update = null }) { Text("Baad me") } }
         )
+    }
+}
+
+@Composable
+fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
+    val tabs = listOf("💬" to "Messages", "🖼" to "Status", "🎤" to "Voice", "⚙" to "Settings")
+    val deleted = messages.count { it.isDeleted }
+    val subtitle = when (tab) {
+        0 -> "${messages.size} saved  •  $deleted deleted"
+        1 -> "Dekhe hue status safe rakho"
+        2 -> "Voice messages dobara suno"
+        else -> "Setup aur options"
+    }
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { AppHeader("Msg Saver", subtitle) },
+        bottomBar = {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                tabs.forEachIndexed { i, (emoji, label) ->
+                    NavigationBarItem(
+                        selected = tab == i, onClick = { onTab(i) },
+                        icon = { Text(emoji, fontSize = 20.sp) }, label = { Text(label) }
+                    )
+                }
+            }
+        }
+    ) { pad ->
+        Box(Modifier.padding(pad).fillMaxSize()) {
+            when (tab) {
+                0 -> MessagesScreen(messages)
+                1 -> StatusScreen()
+                2 -> VoiceScreen()
+                else -> SettingsScreen()
+            }
+        }
+    }
+}
+
+@Composable
+fun SetupWizard(onSkip: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).navigationBarsPadding()
+    ) {
+        AppHeader("Msg Saver", "Bas 3 chhote steps")
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("Shuru karne se pehle", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Har step ka button dabao, wahan switch ON karo aur wapas aao. App khud agla step dikha degi.",
+                fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            SetupSteps()
+            TextButton(onClick = onSkip, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                Text("Baad me karunga")
+            }
+        }
     }
 }
 
@@ -409,47 +452,59 @@ private const val HINT_WA =
 private const val HINT_BIZ =
     "content://com.android.externalstorage.documents/document/primary%3AAndroid%2Fmedia%2Fcom.whatsapp.w4b%2FWhatsApp%20Business%2FMedia"
 
+/** Returns a function that opens the system folder picker. Argument: true = WhatsApp Business. */
 @Composable
-fun SettingsScreen() {
+fun rememberFolderPicker(onDone: () -> Unit): (Boolean) -> Unit {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val cs = MaterialTheme.colorScheme
-    var tick by remember { mutableIntStateOf(0) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
-
-    val notifOk = remember(tick) { hasNotificationAccess(ctx) }
-    val folderOk = remember(tick) { folderReady(ctx) }
-    val batteryOk = remember(tick) {
-        (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(ctx.packageName)
-    }
-    val readyCount = listOf(notifOk, folderOk, batteryOk).count { it }
-    var custom by remember { mutableStateOf(Prefs.get(ctx).getString("custom_deleted", "") ?: "") }
-
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
             ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             val p = Prefs.get(ctx)
             p.edit().putString("tree", uri.toString()).apply()
             if (!p.contains("enabled_at")) p.edit().putLong("enabled_at", System.currentTimeMillis()).apply()
             val root = DocumentFile.fromTreeUri(ctx, uri)
-            val looksRight = root?.findFile(".Statuses") != null || root?.findFile("WhatsApp Voice Notes") != null
+            val okNames = setOf("Media", ".Statuses", "WhatsApp Voice Notes")
+            val looksRight = root != null && (
+                (root.name ?: "") in okNames ||
+                    root.findFile(".Statuses") != null ||
+                    root.findFile("WhatsApp Voice Notes") != null
+                )
             Toast.makeText(
                 ctx,
-                if (looksRight) "Folder sahi hai ✅" else "Ye 'Media' folder nahi lag raha. Dobara choose karo.",
+                if (looksRight) "Folder sahi hai ✅" else "Ye WhatsApp ka Media folder nahi lag raha. Dobara choose karo.",
                 Toast.LENGTH_LONG
             ).show()
-            tick++
+            onDone()
         }
     }
+    return { biz -> launcher.launch(Uri.parse(if (biz) HINT_BIZ else HINT_WA)) }
+}
 
-    Column(
-        Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+/** The three setup cards. Used both in the first-run wizard and in Settings. */
+@Composable
+fun SetupSteps() {
+    val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    var tick by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
+
+    val notifOk = remember(tick) { hasNotificationAccess(ctx) }
+    val filesOk = remember(tick) { folderReady(ctx) }
+    val batteryOk = remember(tick) { batteryReady(ctx) }
+    val allFiles = remember(tick) { hasAllFiles() }
+    val picker = rememberFolderPicker { tick++ }
+
+    val states = listOf(notifOk, filesOk, batteryOk)
+    val readyCount = states.count { it }
+    val current = states.indexOfFirst { !it }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         AppCard(container = cs.primaryContainer) {
             Column(Modifier.padding(16.dp)) {
-                Text("Setup: $readyCount/3 ready", fontWeight = FontWeight.Bold, fontSize = 18.sp,
-                    color = cs.onPrimaryContainer)
+                Text(
+                    if (readyCount == 3) "Sab ready hai 🎉" else "Setup: $readyCount/3 ready",
+                    fontWeight = FontWeight.Bold, fontSize = 18.sp, color = cs.onPrimaryContainer
+                )
                 Spacer(Modifier.height(8.dp))
                 LinearProgressIndicator(
                     progress = { readyCount / 3f },
@@ -459,28 +514,72 @@ fun SettingsScreen() {
             }
         }
 
-        SetupCard(1, "Notification Access", notifOk, "Messages aur deleted messages save karne ke liye.") {
+        SetupCard(
+            1, "Messages padhne ki ijazat", notifOk,
+            "Deleted messages save karne ke liye. Agar 'App was denied access' aaye: App info > upar right ⋮ > 'Allow restricted settings', phir wapas aao.",
+            highlight = current == 0
+        ) {
             Button(onClick = { ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) {
-                Text("Open settings")
+                Text("Allow karo")
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = {
+                ctx.startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}"))
+                )
+            }) { Text("App info") }
+        }
+
+        val filesHelp = when {
+            Build.VERSION.SDK_INT >= 30 && !allFiles ->
+                "Status aur voice messages ke liye. Bas ek switch ON karo (All files access)."
+            Build.VERSION.SDK_INT >= 30 && !filesOk ->
+                "Access mil gaya, par WhatsApp ka folder nahi mila. 'Folder chuno' dabao aur 'Media' folder select karo."
+            Build.VERSION.SDK_INT >= 30 -> "Access mil gaya ✅ WhatsApp aur Business dono scan honge."
+            else -> "Folder chuno: khulne wali screen me neeche 'Use this folder' dabao. Folder ka naam 'Media' hona chahiye."
+        }
+        SetupCard(2, "Status aur voice files", filesOk, filesHelp, highlight = current == 1) {
+            if (Build.VERSION.SDK_INT >= 30) {
+                Button(onClick = {
+                    ctx.startActivity(
+                        Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${ctx.packageName}"))
+                    )
+                }) { Text("Allow karo") }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = { picker(false) }) { Text("Folder chuno") }
+            } else {
+                Button(onClick = { picker(false) }) { Text("WhatsApp") }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = { picker(true) }) { Text("Business") }
             }
         }
 
         SetupCard(
-            2, "WhatsApp folder", folderOk,
-            "Status aur voice ke liye. Khulne wali screen me neeche 'Use this folder' dabao. Folder ka naam 'Media' hona chahiye."
+            3, "Background me chalne do", batteryOk,
+            "Warna phone app ko band kar dega aur naye messages miss ho jayenge.",
+            highlight = current == 2
         ) {
-            Button(onClick = { picker.launch(Uri.parse(HINT_WA)) }) { Text("WhatsApp") }
-            Spacer(Modifier.width(8.dp))
-            OutlinedButton(onClick = { picker.launch(Uri.parse(HINT_BIZ)) }) { Text("Business") }
-        }
-
-        SetupCard(3, "Battery: Unrestricted", batteryOk, "Warna phone app ko background me band kar dega.") {
             Button(onClick = {
                 ctx.startActivity(
                     Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}"))
                 )
-            }) { Text("Allow") }
+            }) { Text("Allow karo") }
         }
+    }
+}
+
+@Composable
+fun SettingsScreen() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val cs = MaterialTheme.colorScheme
+    var custom by remember { mutableStateOf(Prefs.get(ctx).getString("custom_deleted", "") ?: "") }
+
+    Column(
+        Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SetupSteps()
 
         AppCard {
             Column(Modifier.padding(16.dp)) {
@@ -554,9 +653,12 @@ fun SettingsScreen() {
 }
 
 @Composable
-fun SetupCard(n: Int, title: String, ok: Boolean, help: String, actions: @Composable RowScope.() -> Unit) {
+fun SetupCard(
+    n: Int, title: String, ok: Boolean, help: String, highlight: Boolean = false,
+    actions: @Composable RowScope.() -> Unit
+) {
     val cs = MaterialTheme.colorScheme
-    AppCard {
+    AppCard(border = if (highlight) BorderStroke(2.dp, cs.primary) else null) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(

@@ -1,5 +1,6 @@
 package com.example.msgsaver
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -75,6 +76,7 @@ fun Avatar(name: String, size: Dp = 40.dp) {
 fun AppCard(
     modifier: Modifier = Modifier,
     container: Color = MaterialTheme.colorScheme.surface,
+    border: BorderStroke? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(
@@ -82,6 +84,7 @@ fun AppCard(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = container),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        border = border,
         content = content
     )
 }

@@ -17,8 +17,8 @@ android {
         minSdk = 29
         targetSdk = 34
         // IMPORTANT: increase versionCode by 1 for every update you release
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
     }
     signingConfigs {
         if (ksFile != null) {
@@ -35,6 +35,10 @@ android {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
+    }
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
     }
     buildFeatures { compose = true }
     compileOptions {

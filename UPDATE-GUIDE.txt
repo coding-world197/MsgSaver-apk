@@ -28,3 +28,8 @@ HAR UPDATE KA TAREEKA
 4. Jin logon ke phone me app hai, unhe app khulte hi "Naya update" popup milega.
 
 NOTE: applicationId (com.example.msgsaver) kabhi mat badlo.
+
+v1.2 (build 3) - kya naya
+- Pehli baar app kholne par guided setup screen (3 steps), har step khud detect hota hai.
+- Folder chunna zaroori nahi: "All files access" ka ek switch (Android 11+). WhatsApp aur Business dono ek saath.
+- Agar All files access se folder na mile to "Folder chuno" ka purana tareeka bhi hai (ab Media, .Statuses ya WhatsApp Voice Notes teeno folder chalte hain).
