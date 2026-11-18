@@ -57,7 +57,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
-        setContent { MsgSaverTheme { Root() } }
+        setContent { ChatRewindTheme { Root() } }
     }
 }
 
@@ -136,7 +136,7 @@ fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
     }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { AppHeader("Msg Saver", subtitle) },
+        topBar = { AppHeader("ChatRewind", subtitle) },
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 tabs.forEachIndexed { i, (emoji, label) ->
@@ -164,7 +164,7 @@ fun SetupWizard(onSkip: () -> Unit) {
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).navigationBarsPadding()
     ) {
-        AppHeader("Msg Saver", "Just 3 quick steps")
+        AppHeader("ChatRewind", "Just 3 quick steps")
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)

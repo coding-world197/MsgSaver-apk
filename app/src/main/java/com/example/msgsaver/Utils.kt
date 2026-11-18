@@ -53,7 +53,7 @@ fun openFile(ctx: Context, path: String) {
     }
 }
 
-/** Copies a backed-up status into the phone gallery (Pictures/MsgSaver or Movies/MsgSaver). */
+/** Copies a backed-up status into the phone gallery (Pictures/ChatRewind or Movies/ChatRewind). */
 fun saveToGallery(ctx: Context, f: BackupFile): Boolean {
     return try {
         val isVideo = f.name.endsWith(".mp4", true)
@@ -63,7 +63,7 @@ fun saveToGallery(ctx: Context, f: BackupFile): Boolean {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, f.name)
             put(MediaStore.MediaColumns.MIME_TYPE, mimeOf(f.name))
-            if (Build.VERSION.SDK_INT >= 29) put(MediaStore.MediaColumns.RELATIVE_PATH, "$folder/MsgSaver")
+            if (Build.VERSION.SDK_INT >= 29) put(MediaStore.MediaColumns.RELATIVE_PATH, "$folder/ChatRewind")
         }
         val uri = ctx.contentResolver.insert(collection, values) ?: return false
         ctx.contentResolver.openOutputStream(uri)?.use { o ->

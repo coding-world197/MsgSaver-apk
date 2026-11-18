@@ -40,7 +40,7 @@ private val DarkColors = darkColorScheme(
 )
 
 @Composable
-fun MsgSaverTheme(content: @Composable () -> Unit) {
+fun ChatRewindTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
         content = content

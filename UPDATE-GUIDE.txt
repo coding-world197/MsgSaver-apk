@@ -1,4 +1,4 @@
-MsgSaver v1.1 - kya badla
+ChatRewind v1.1 - kya badla
 - Naya UI (dark mode ke saath), logo, update checker
 - Signed release build + GitHub Release (update ek hi link se milega)
 
@@ -24,7 +24,7 @@ HAR UPDATE KA TAREEKA
 1. app/build.gradle.kts me versionCode ko 1 se badhao (2 -> 3 -> 4) aur versionName badlo.
 2. Code upload/commit karo. Build apne aap chalega aur GitHub Release ban jayegi.
 3. Website ka download link (hamesha latest APK):
-   https://github.com/coding-world197/MSG-server/releases/latest/download/MsgSaver.apk
+   https://github.com/coding-world197/MSG-server/releases/latest/download/ChatRewind.apk
 4. Jin logon ke phone me app hai, unhe app khulte hi "Naya update" popup milega.
 
 NOTE: applicationId (com.example.msgsaver) kabhi mat badlo.
@@ -35,3 +35,4 @@ v1.2 (build 3) - kya naya
 - Agar All files access se folder na mile to "Folder chuno" ka purana tareeka bhi hai (ab Media, .Statuses ya WhatsApp Voice Notes teeno folder chalte hain).
 
 v1.3 (build 4) - App ka poora text ab English me hai.
+v1.4 (build 5) - App renamed to ChatRewind. APK file is now ChatRewind.apk
