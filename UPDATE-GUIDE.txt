@@ -24,7 +24,7 @@ HAR UPDATE KA TAREEKA
 1. app/build.gradle.kts me versionCode ko 1 se badhao (2 -> 3 -> 4) aur versionName badlo.
 2. Code upload/commit karo. Build apne aap chalega aur GitHub Release ban jayegi.
 3. Website ka download link (hamesha latest APK):
-   https://github.com/coding-world197/MSG-server/releases/latest/download/ChatRewind.apk
+   https://github.com/coding-world197/MsgSaver-apk/releases/latest/download/ChatRewind.apk
 4. Jin logon ke phone me app hai, unhe app khulte hi "Naya update" popup milega.
 
 NOTE: applicationId (com.example.msgsaver) kabhi mat badlo.
@@ -40,3 +40,4 @@ v1.4 (build 5) - App renamed to ChatRewind. APK file is now ChatRewind.apk
 v1.5 (build 6) - New Photos tab (regular photos/videos people send you, not view-once).
 Each saved status, voice note and photo now shows a small "WhatsApp" or "Business" tag,
 so you can confirm both accounts are being picked up.
+v1.6 (build 7) - Fixed repo name mismatch: Updater now points to coding-world197/MsgSaver-apk

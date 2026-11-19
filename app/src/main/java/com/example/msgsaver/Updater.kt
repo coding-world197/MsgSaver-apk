@@ -12,7 +12,7 @@ data class UpdateInfo(val versionCode: Long, val name: String, val url: String, 
 /** Checks the latest GitHub Release of this project. Release tags look like "v2", "v3" ... */
 object Updater {
     // Change this if your GitHub username or repository name is different
-    const val REPO = "coding-world197/MSG-server"
+    const val REPO = "coding-world197/MsgSaver-apk"
 
     suspend fun latest(): UpdateInfo? = withContext(Dispatchers.IO) {
         try {
