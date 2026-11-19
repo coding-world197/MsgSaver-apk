@@ -16,12 +16,13 @@ data class SavedMessage(
 @Entity(tableName = "files", indices = [Index(value = ["category", "name"], unique = true)])
 data class BackupFile(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val category: String,          // "status" or "voice"
+    val category: String,          // "status", "voice" or "photo"
     val name: String,
     val path: String,
     val origModified: Long,
     val savedAt: Long,
-    val size: Long
+    val size: Long,
+    val isBiz: Boolean = false     // true = WhatsApp Business, false = regular WhatsApp
 )
 
 @Dao
@@ -56,7 +57,7 @@ interface AppDao {
     @Query("DELETE FROM files") suspend fun clearFiles()
 }
 
-@Database(entities = [SavedMessage::class, BackupFile::class], version = 2, exportSchema = false)
+@Database(entities = [SavedMessage::class, BackupFile::class], version = 3, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): AppDao
     companion object {
