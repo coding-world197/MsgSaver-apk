@@ -27,8 +27,16 @@ data class BackupFile(
 
 @Dao
 interface AppDao {
+
+    
     // messages
     @Insert suspend fun insert(m: SavedMessage)
+
+    @Query("SELECT * FROM files WHERE category = 'viewonce' AND name LIKE 'notif\\_%' ESCAPE '\\'")
+    suspend fun notifItems(): List<BackupFile>
+
+    @Query("DELETE FROM files WHERE category = 'viewonce' AND name LIKE 'notif\\_%' ESCAPE '\\'")
+    suspend fun deleteNotifItems()
 
     @Query("SELECT * FROM messages ORDER BY timestamp DESC")
     fun messages(): Flow<List<SavedMessage>>
