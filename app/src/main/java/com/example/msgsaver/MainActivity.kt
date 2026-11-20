@@ -126,12 +126,15 @@ fun Root() {
 
 @Composable
 fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
-    val tabs = listOf("💬" to "Messages", "🖼" to "Status", "🎤" to "Voice", "⚙" to "Settings")
+    val tabs = listOf(
+        "💬" to "Messages", "🖼" to "Status", "🎤" to "Voice", "👁" to "Once", "⚙" to "Settings"
+    )
     val deleted = messages.count { it.isDeleted }
     val subtitle = when (tab) {
         0 -> "${messages.size} saved  •  $deleted deleted"
         1 -> "Keep the statuses you have viewed"
         2 -> "Listen to voice messages again"
+        3 -> "View-once photos and videos"
         else -> "Setup and options"
     }
     Scaffold(
@@ -153,6 +156,7 @@ fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
                 0 -> MessagesScreen(messages)
                 1 -> StatusScreen()
                 2 -> VoiceScreen()
+                3 -> ViewOnceScreen()
                 else -> SettingsScreen()
             }
         }
@@ -398,6 +402,63 @@ fun SourceTag(isBiz: Boolean) {
     )
 }
 
+/* ------------------------------ VIEW ONCE ------------------------------ */
+
+@Composable
+fun ViewOnceScreen() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val files by AppDb.get(ctx).dao().files("viewonce").collectAsState(initial = emptyList())
+    val loader = remember { ImageLoader.Builder(ctx).components { add(VideoFrameDecoder.Factory()) }.build() }
+    var ready by remember { mutableStateOf(folderReady(ctx)) }
+    LaunchedEffect(Unit) { Scanner.run(ctx) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        ready = folderReady(ctx)
+        scope.launch { Scanner.run(ctx) }
+    }
+
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        contentPadding = PaddingValues(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Column {
+                if (!ready) {
+                    AppCard(container = MaterialTheme.colorScheme.errorContainer) {
+                        Text(
+                            "First give access to the WhatsApp folder in Settings.",
+                            Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${files.size} view-once items saved", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("Saved the moment they arrive. They stay here even after WhatsApp deletes them.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    FilledTonalButton(onClick = {
+                        scope.launch {
+                            val n = Scanner.run(ctx)
+                            Toast.makeText(ctx, "$n new items saved", Toast.LENGTH_SHORT).show()
+                        }
+                    }) { Text("🔄 Refresh") }
+                }
+            }
+        }
+        if (files.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                EmptyState("👁", "No view-once media yet",
+                    "Ask someone to send a view-once photo or video. Auto-download must be on in WhatsApp.")
+            }
+        }
+        items(files, key = { it.id }) { StatusItem(it, loader) }
+    }
+}
+
 /* ------------------------------ VOICE ------------------------------ */
 
 @Composable
@@ -548,13 +609,13 @@ fun SetupSteps() {
 
         val filesHelp = when {
             Build.VERSION.SDK_INT >= 30 && !allFiles ->
-                "For statuses and voice messages. Just turn on one switch (All files access)."
+                "For statuses, voice messages and view-once media. Just turn on one switch (All files access)."
             Build.VERSION.SDK_INT >= 30 && !filesOk ->
                 "Access granted, but WhatsApp’s folder wasn’t found. Tap ‘Choose folder’ and select the ‘Media’ folder."
             Build.VERSION.SDK_INT >= 30 -> "Access granted ✅ Both WhatsApp and Business will be scanned."
             else -> "Choose a folder: on the screen that opens, tap ‘Use this folder’ at the bottom. The folder must be named ‘Media’."
         }
-        SetupCard(2, "Status and voice files", filesOk, filesHelp, highlight = current == 1) {
+        SetupCard(2, "Status, voice and view-once files", filesOk, filesHelp, highlight = current == 1) {
             if (Build.VERSION.SDK_INT >= 30) {
                 Button(onClick = {
                     ctx.startActivity(
@@ -656,12 +717,12 @@ fun SettingsScreen() {
                         File(ctx.filesDir, "backup").deleteRecursively()
                         AppDb.get(ctx).dao().clearFiles()
                     }
-                }) { Text("Delete all statuses and voice messages") }
+                }) { Text("Delete all statuses, voice and view-once items") }
             }
         }
 
         Text(
-            "Privacy: your messages, statuses and voice messages stay on your phone. The internet is used only to check for a new version. This app is separate from WhatsApp and is not part of it.",
+            "Privacy: your messages, statuses, voice messages and view-once media stay on your phone. The internet is used only to check for a new version. This app is separate from WhatsApp and is not part of it.",
             fontSize = 12.sp, color = cs.onSurfaceVariant
         )
         Spacer(Modifier.height(8.dp))
