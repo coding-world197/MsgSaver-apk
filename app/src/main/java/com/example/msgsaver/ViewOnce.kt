@@ -63,9 +63,8 @@ object ViewOnceWatcher {
 }
 
 /**
- * Notification se sirf itna pata chalta hai ke view-once media aa raha hai.
- * Photo ke liye EXTRA_PICTURE fallback: agar 4 second tak folder se kuch nahi mila,
- * to notification wali image save kar do.
+ * Notification sirf trigger hai. Asli file Private folder se aati hai.
+ * Fallback (notification preview) sirf tab jab na view-once file mile, na normal photo aayi ho.
  */
 object Armer {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -81,8 +80,12 @@ object Armer {
         arm()
         if (bmp == null) return
         scope.launch {
-            delay(4000)
-            if (lastHit < t) saveBitmap(ctx.applicationContext, bmp)
+            delay(3000)
+            // View-once file mil gayi -> fallback ki zaroorat nahi
+            if (lastHit >= t) return@launch
+            // Normal photo aayi (root folder mein nayi file) -> yeh view-once nahi hai
+            if (Scanner.regularImageSince(ctx.applicationContext, t)) return@launch
+            saveBitmap(ctx.applicationContext, bmp)
         }
     }
 
