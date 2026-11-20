@@ -69,23 +69,36 @@ object ViewOnceWatcher {
 object Armer {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var until = 0L
-    @Volatile var lastHit = 0L
+    @Volatile private var lastHit = 0L
+    @Volatile private var lastNotifSave = 0L
 
     fun arm(ttlMs: Long = 90_000L) { until = System.currentTimeMillis() + ttlMs }
     fun isArmed() = System.currentTimeMillis() < until
     fun hit() { lastHit = System.currentTimeMillis() }
 
     fun armWithBitmap(ctx: Context, bmp: Bitmap?) {
+        val app = ctx.applicationContext
+        // User fallback band kar sakta hai (Settings)
+        if (!Prefs.get(app).getBoolean("notif_fallback", true)) return
+
         val t = System.currentTimeMillis()
         arm()
         if (bmp == null) return
+
         scope.launch {
             delay(3000)
-            // View-once file mil gayi -> fallback ki zaroorat nahi
+
+            // 1) View-once file mil gayi -> fallback ki zaroorat nahi
             if (lastHit >= t) return@launch
-            // Normal photo aayi (root folder mein nayi file) -> yeh view-once nahi hai
-            if (Scanner.regularImageSince(ctx.applicationContext, t)) return@launch
-            saveBitmap(ctx.applicationContext, bmp)
+
+            // 2) Normal photo aayi (regular folder mein nayi file) -> yeh view-once nahi hai
+            if (Scanner.regularImageSince(app, t)) return@launch
+
+            // 3) WhatsApp ne same notification dobara bheji -> duplicate na banao
+            if (System.currentTimeMillis() - lastNotifSave < 2000L) return@launch
+            lastNotifSave = System.currentTimeMillis()
+
+            saveBitmap(app, bmp)
         }
     }
 
@@ -104,6 +117,7 @@ object Armer {
                         size = out.length()
                     )
                 )
+                hit()
             }
         }
     }
