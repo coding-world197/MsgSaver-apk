@@ -126,13 +126,12 @@ fun Root() {
 
 @Composable
 fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
-    val tabs = listOf("💬" to "Messages", "🖼" to "Status", "📷" to "Photos", "🎤" to "Voice", "⚙" to "Settings")
+    val tabs = listOf("💬" to "Messages", "🖼" to "Status", "🎤" to "Voice", "⚙" to "Settings")
     val deleted = messages.count { it.isDeleted }
     val subtitle = when (tab) {
         0 -> "${messages.size} saved  •  $deleted deleted"
         1 -> "Keep the statuses you have viewed"
-        2 -> "Photos and videos people sent you"
-        3 -> "Listen to voice messages again"
+        2 -> "Listen to voice messages again"
         else -> "Setup and options"
     }
     Scaffold(
@@ -153,8 +152,7 @@ fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
             when (tab) {
                 0 -> MessagesScreen(messages)
                 1 -> StatusScreen()
-                2 -> PhotosScreen()
-                3 -> VoiceScreen()
+                2 -> VoiceScreen()
                 else -> SettingsScreen()
             }
         }
@@ -398,107 +396,6 @@ fun SourceTag(isBiz: Boolean) {
             .background(if (isBiz) Color(0xFF1F7A5C) else Color(0xFF2E8B9E))
             .padding(horizontal = 7.dp, vertical = 3.dp)
     )
-}
-
-/* ------------------------------ PHOTOS ------------------------------ */
-
-@Composable
-fun PhotosScreen() {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val files by AppDb.get(ctx).dao().files("photo").collectAsState(initial = emptyList())
-    val loader = remember { ImageLoader.Builder(ctx).components { add(VideoFrameDecoder.Factory()) }.build() }
-    var ready by remember { mutableStateOf(folderReady(ctx)) }
-    LaunchedEffect(Unit) { Scanner.run(ctx) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        ready = folderReady(ctx)
-        scope.launch { Scanner.run(ctx) }
-    }
-
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        contentPadding = PaddingValues(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Column {
-                if (!ready) {
-                    AppCard(container = MaterialTheme.colorScheme.errorContainer) {
-                        Text(
-                            "First give file access in Settings.",
-                            Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onErrorContainer
-                        )
-                    }
-                    Spacer(Modifier.height(10.dp))
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("${files.size} photos & videos saved", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(
-                            "Only regular photos and videos. View-once media is never saved here.",
-                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    FilledTonalButton(onClick = {
-                        scope.launch {
-                            val n = Scanner.run(ctx)
-                            Toast.makeText(ctx, "$n new files saved", Toast.LENGTH_SHORT).show()
-                        }
-                    }) { Text("🔄 Refresh") }
-                }
-            }
-        }
-        if (files.isEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                EmptyState("📷", "No photos or videos yet",
-                    "Photos and videos sent to you will appear here automatically.")
-            }
-        }
-        items(files, key = { it.id }) { PhotoItem(it, loader) }
-    }
-}
-
-@Composable
-fun PhotoItem(f: BackupFile, loader: ImageLoader) {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val isVideo = f.name.endsWith(".mp4", true)
-    Box(
-        Modifier.fillMaxWidth().aspectRatio(0.9f)
-            .clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable { openFile(ctx, f.path) }
-    ) {
-        AsyncImage(
-            model = File(f.path), imageLoader = loader, contentDescription = null,
-            contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
-        )
-        if (isVideo) {
-            Box(
-                Modifier.align(Alignment.Center).size(44.dp).clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center
-            ) { Text("▶", color = Color.White, fontSize = 18.sp) }
-        }
-        SourceTag(f.isBiz)
-        Row(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))))
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Pill("⬇ Save") {
-                scope.launch {
-                    val ok = withContext(Dispatchers.IO) { saveToGallery(ctx, f) }
-                    Toast.makeText(ctx, if (ok) "Saved to gallery" else "Couldn't save", Toast.LENGTH_SHORT).show()
-                }
-            }
-            Pill("🗑") {
-                scope.launch(Dispatchers.IO) { File(f.path).delete(); AppDb.get(ctx).dao().deleteFile(f) }
-            }
-        }
-    }
 }
 
 /* ------------------------------ VOICE ------------------------------ */

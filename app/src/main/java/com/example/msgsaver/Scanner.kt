@@ -111,15 +111,6 @@ object Scanner {
                 }
             }
 
-            // Regular photos and videos someone sent you (not view-once; those are never saved to this folder by WhatsApp)
-            listOf("WhatsApp Images", "WhatsApp Video").forEach { folderName ->
-                val folder = if (root.name == folderName) root else root.child(folderName)
-                folder?.children()?.forEach { f ->
-                    if (!f.isDir && f.modified >= since && !f.name.contains("Sticker", true) &&
-                        save(ctx, dao, "photo", f, biz)
-                    ) saved++
-                }
-            }
         }
         return saved
     }
