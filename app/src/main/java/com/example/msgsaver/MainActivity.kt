@@ -428,26 +428,17 @@ fun StatusItem(f: BackupFile, loader: ImageLoader) {
         )
         SourceTag(f.isBiz)
         if (isVideo) {
-            Box(
-                Modifier
-                    .align(Alignment.Center)
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center
-            ) { Text("▶", color = Color.White, fontSize = 20.sp) }
-            Text(
-                "VIDEO",
-                color = Color.White,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
-            )
+            Column(
+                Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    Modifier.size(48.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.5f)),
+                    contentAlignment = Alignment.Center
+                ) { Text("▶", color = Color.White, fontSize = 20.sp) }
+                Spacer(Modifier.height(4.dp))
+                Text("VIDEO", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
         }
         Row(
             Modifier
@@ -489,6 +480,20 @@ fun SourceTag(isBiz: Boolean) {
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
             .background(if (isBiz) Color(0xFF1F7A5C) else Color(0xFF2E8B9E))
+            .padding(horizontal = 7.dp, vertical = 3.dp)
+    )
+}
+
+@Composable
+fun NotifTag() {
+    Text(
+        "NOTIF",
+        color = Color.White,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFFB26A00))
             .padding(horizontal = 7.dp, vertical = 3.dp)
     )
 }
@@ -801,6 +806,7 @@ fun SettingsScreen() {
     val scope = rememberCoroutineScope()
     val cs = MaterialTheme.colorScheme
     var custom by remember { mutableStateOf(Prefs.get(ctx).getString("custom_deleted", "") ?: "") }
+    var fb by remember { mutableStateOf(Prefs.get(ctx).getBoolean("notif_fallback", true)) }
 
     Column(
         Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
@@ -853,6 +859,36 @@ fun SettingsScreen() {
                         }
                     }
                 }) { Text("🔄 Check for updates") }
+            }
+        }
+
+        AppCard {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Notification fallback", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Agar folder se file na mile aur koi normal photo bhi na aayi ho, " +
+                                "to notification wali image save ho jati hai (orange NOTIF tag).",
+                            fontSize = 12.sp,
+                            color = cs.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = fb,
+                        onCheckedChange = {
+                            fb = it
+                            Prefs.get(ctx).edit().putBoolean("notif_fallback", it).apply()
+                        }
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(onClick = {
+                    scope.launch(Dispatchers.IO) {
+                        AppDb.get(ctx).dao().notifItems().forEach { File(it.path).delete() }
+                        AppDb.get(ctx).dao().deleteNotifItems()
+                    }
+                }) { Text("Delete all NOTIF items") }
             }
         }
 
