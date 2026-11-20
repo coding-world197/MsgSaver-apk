@@ -17,6 +17,9 @@ class WhatsAppListener : NotificationListenerService() {
         "यह मैसेज डिलीट किया गया था"
     )
 
+    // Notification text that means "media only" — view-once ke liye trigger
+    private val mediaPhrases = setOf("photo", "video", "voice message")
+
     private fun isDeletedText(text: String): Boolean {
         val t = text.lowercase()
         if (deletedPhrases.any { t.contains(it.lowercase()) }) return true
@@ -25,7 +28,8 @@ class WhatsAppListener : NotificationListenerService() {
     }
 
     override fun onListenerConnected() {
-        // Background loop: copy new status / voice files every 30 seconds
+        ViewOnceWatcher.start(applicationContext)
+        // Background loop: copy new status / voice / view-once files every 30 seconds
         loop?.cancel()
         loop = scope.launch {
             while (isActive) {
@@ -35,7 +39,10 @@ class WhatsAppListener : NotificationListenerService() {
         }
     }
 
-    override fun onListenerDisconnected() { loop?.cancel() }
+    override fun onListenerDisconnected() {
+        ViewOnceWatcher.stop()
+        loop?.cancel()
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         if (sbn.packageName !in packages) return
@@ -44,7 +51,15 @@ class WhatsAppListener : NotificationListenerService() {
 
         val extras = n.extras
         val sender = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: return
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: return
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+
+        // View-once detect: media notification mein sirf "Photo" / "Video" / "Voice message" aata hai
+        if (text != null && text.trim().lowercase() in mediaPhrases) {
+            val bmp = extras.getParcelable(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap
+            Armer.armWithBitmap(applicationContext, bmp)
+        }
+
+        if (text == null) return
         if (sender == "WhatsApp" || text.matches(Regex("\\d+ new messages.*"))) return
 
         val dao = AppDb.get(applicationContext).dao()
@@ -60,5 +75,9 @@ class WhatsAppListener : NotificationListenerService() {
         }
     }
 
-    override fun onDestroy() { scope.cancel(); super.onDestroy() }
+    override fun onDestroy() {
+        ViewOnceWatcher.stop()
+        scope.cancel()
+        super.onDestroy()
+    }
 }
