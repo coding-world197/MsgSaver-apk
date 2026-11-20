@@ -36,8 +36,9 @@ fun mimeOf(name: String): String = when (name.substringAfterLast('.', "").lowerc
     "jpg", "jpeg" -> "image/jpeg"
     "png" -> "image/png"
     "gif" -> "image/gif"
+    "webp" -> "image/webp"
     "opus", "ogg" -> "audio/ogg"
-    "m4a" -> "audio/mp4"
+    "m4a", "mp3" -> "audio/mp4"
     else -> "*/*"
 }
 
@@ -53,21 +54,38 @@ fun openFile(ctx: Context, path: String) {
     }
 }
 
-/** Copies a backed-up status into the phone gallery (Pictures/ChatRewind or Movies/ChatRewind). */
+/** Copies a backed-up file into the phone gallery. Photos, videos and audio all handled. */
 fun saveToGallery(ctx: Context, f: BackupFile): Boolean {
     return try {
-        val isVideo = f.name.endsWith(".mp4", true)
-        val collection = if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val folder = if (isVideo) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_PICTURES
+        val mime = mimeOf(f.name)
+        val isVideo = mime.startsWith("video")
+        val isAudio = mime.startsWith("audio")
+        val collection = when {
+            isVideo -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            isAudio -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            else -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        }
+        val folder = when {
+            isVideo -> Environment.DIRECTORY_MOVIES
+            isAudio -> Environment.DIRECTORY_MUSIC
+            else -> Environment.DIRECTORY_PICTURES
+        }
         val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, f.name)
-            put(MediaStore.MediaColumns.MIME_TYPE, mimeOf(f.name))
-            if (Build.VERSION.SDK_INT >= 29) put(MediaStore.MediaColumns.RELATIVE_PATH, "$folder/ChatRewind")
+            put(MediaStore.MediaColumns.DISPLAY_NAME, f.name.substringAfterLast('_'))
+            put(MediaStore.MediaColumns.MIME_TYPE, mime)
+            if (Build.VERSION.SDK_INT >= 29) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "$folder/ChatRewind")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
         }
         val uri = ctx.contentResolver.insert(collection, values) ?: return false
         ctx.contentResolver.openOutputStream(uri)?.use { o ->
             File(f.path).inputStream().use { it.copyTo(o) }
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            ctx.contentResolver.update(
+                uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null
+            )
         }
         true
     } catch (e: Exception) { false }
