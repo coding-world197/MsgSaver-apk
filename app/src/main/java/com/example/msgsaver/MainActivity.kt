@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationManagerCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -62,14 +63,18 @@ class MainActivity : ComponentActivity() {
 }
 
 fun hasNotificationAccess(ctx: Context): Boolean {
+    val enabledPackages = NotificationManagerCompat.getEnabledListenerPackages(ctx)
+    if (ctx.packageName in enabledPackages) return true
     val flat = Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners") ?: ""
     return flat.contains(ComponentName(ctx, WhatsAppListener::class.java).flattenToString())
 }
 
 fun folderReady(ctx: Context): Boolean = directRoots().isNotEmpty() || safRoot(ctx) != null
 
-fun batteryReady(ctx: Context): Boolean =
-    (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(ctx.packageName)
+fun batteryReady(ctx: Context): Boolean {
+    val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+    return pm.isIgnoringBatteryOptimizations(ctx.packageName)
+}
 
 fun allSetupReady(ctx: Context): Boolean =
     hasNotificationAccess(ctx) && folderReady(ctx) && batteryReady(ctx)
@@ -85,21 +90,26 @@ fun Root() {
     var update by remember { mutableStateOf<UpdateInfo?>(null) }
     var tick by remember { mutableIntStateOf(0) }
     var skipped by remember { mutableStateOf(Prefs.get(ctx).getBoolean("setup_skipped", false)) }
+
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
-    val allReady = remember(tick) { allSetupReady(ctx) }
+    val allReady by remember(tick) { derivedStateOf { allSetupReady(ctx) } }
 
     LaunchedEffect(Unit) {
-        val u = Updater.latest()
-        if (u != null && u.versionCode > currentVersionCode(ctx)) update = u
+        val latest = withContext(Dispatchers.IO) { Updater.latest() }
+        if (latest != null && latest.versionCode > currentVersionCode(ctx)) {
+            update = latest
+        }
     }
 
     if (!allReady && !skipped) {
-        SetupWizard(onSkip = {
-            skipped = true
-            Prefs.get(ctx).edit().putBoolean("setup_skipped", true).apply()
-        })
+        SetupWizard(
+            onSkip = {
+                skipped = true
+                Prefs.get(ctx).edit().putBoolean("setup_skipped", true).apply()
+            }
+        )
     } else {
-        MainScaffold(messages, tab) { tab = it }
+        MainScaffold(messages = messages, tab = tab, onTab = { tab = it })
     }
 
     update?.let { u ->
@@ -115,11 +125,13 @@ fun Root() {
             },
             confirmButton = {
                 Button(onClick = {
-                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u.url)))
                     update = null
                 }) { Text("Download") }
             },
-            dismissButton = { TextButton(onClick = { update = null }) { Text("Later") } }
+            dismissButton = {
+                TextButton(onClick = { update = null }) { Text("Later") }
+            }
         )
     }
 }
@@ -127,9 +139,13 @@ fun Root() {
 @Composable
 fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
     val tabs = listOf(
-        "💬" to "Messages", "🖼" to "Status", "🎤" to "Voice", "👁" to "Once", "⚙" to "Settings"
+        "💬" to "Messages",
+        "🖼" to "Status",
+        "🎤" to "Voice",
+        "👁" to "Once",
+        "⚙" to "Settings"
     )
-    val deleted = messages.count { it.isDeleted }
+    val deleted = remember(messages) { messages.count { it.isDeleted } }
     val subtitle = when (tab) {
         0 -> "${messages.size} saved  •  $deleted deleted"
         1 -> "Keep the statuses you have viewed"
@@ -144,8 +160,10 @@ fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 tabs.forEachIndexed { i, (emoji, label) ->
                     NavigationBarItem(
-                        selected = tab == i, onClick = { onTab(i) },
-                        icon = { Text(emoji, fontSize = 20.sp) }, label = { Text(label) }
+                        selected = tab == i,
+                        onClick = { onTab(i) },
+                        icon = { Text(emoji, fontSize = 20.sp) },
+                        label = { Text(label) }
                     )
                 }
             }
@@ -166,20 +184,30 @@ fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
 @Composable
 fun SetupWizard(onSkip: () -> Unit) {
     Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).navigationBarsPadding()
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .navigationBarsPadding()
     ) {
         AppHeader("ChatRewind", "Just 3 quick steps")
         Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("Before you start", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Text(
                 "Tap each step’s button, turn the switch on and come back. The app will show the next step by itself.",
-                fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             SetupSteps()
-            TextButton(onClick = onSkip, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            TextButton(
+                onClick = onSkip,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            ) {
                 Text("I’ll do it later")
             }
         }
@@ -196,11 +224,11 @@ fun MessagesScreen(all: List<SavedMessage>) {
 
     var onlyDeleted by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    val delCount = all.count { it.isDeleted }
+    val delCount = remember(all) { all.count { it.isDeleted } }
     val shown = remember(all, onlyDeleted, query) {
-        all.filter {
-            (!onlyDeleted || it.isDeleted) &&
-                (query.isBlank() || it.text.contains(query, true) || it.sender.contains(query, true))
+        all.filter { msg ->
+            (!onlyDeleted || msg.isDeleted) &&
+                (query.isBlank() || msg.text.contains(query, true) || msg.sender.contains(query, true))
         }
     }
 
@@ -212,10 +240,16 @@ fun MessagesScreen(all: List<SavedMessage>) {
             item {
                 AppCard(container = MaterialTheme.colorScheme.errorContainer) {
                     Column(Modifier.padding(16.dp)) {
-                        Text("Notification access is off", fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onErrorContainer)
-                        Text("You need to allow this to save messages.",
-                            color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 14.sp)
+                        Text(
+                            "Notification access is off",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            "You need to allow this to save messages.",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontSize = 14.sp
+                        )
                         Spacer(Modifier.height(8.dp))
                         Button(onClick = {
                             ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -226,18 +260,27 @@ fun MessagesScreen(all: List<SavedMessage>) {
         }
         item {
             OutlinedTextField(
-                value = query, onValueChange = { query = it }, singleLine = true,
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
                 placeholder = { Text("Search by message or name") },
                 leadingIcon = { Text("🔍") },
-                shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
             )
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = !onlyDeleted, onClick = { onlyDeleted = false },
-                    label = { Text("All (${all.size})") })
-                FilterChip(selected = onlyDeleted, onClick = { onlyDeleted = true },
-                    label = { Text("🗑 Deleted ($delCount)") })
+                FilterChip(
+                    selected = !onlyDeleted,
+                    onClick = { onlyDeleted = false },
+                    label = { Text("All (${all.size})") }
+                )
+                FilterChip(
+                    selected = onlyDeleted,
+                    onClick = { onlyDeleted = true },
+                    label = { Text("🗑 Deleted ($delCount)") }
+                )
             }
         }
         if (shown.isEmpty()) {
@@ -262,14 +305,20 @@ fun MessageBubble(m: SavedMessage) {
         Card(
             Modifier.weight(1f),
             shape = RoundedCornerShape(4.dp, 18.dp, 18.dp, 18.dp),
-            colors = CardDefaults.cardColors(containerColor = if (m.isDeleted) cs.errorContainer else cs.surface),
+            colors = CardDefaults.cardColors(
+                containerColor = if (m.isDeleted) cs.errorContainer else cs.surface
+            ),
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
             Column(Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        m.sender, fontWeight = FontWeight.Bold, color = cs.primary,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
+                        m.sender,
+                        fontWeight = FontWeight.Bold,
+                        color = cs.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(formatTime(m.timestamp), fontSize = 11.sp, color = cs.onSurfaceVariant)
@@ -278,8 +327,12 @@ fun MessageBubble(m: SavedMessage) {
                 Text(m.text, color = if (m.isDeleted) cs.onErrorContainer else cs.onSurface)
                 if (m.isDeleted) {
                     Spacer(Modifier.height(6.dp))
-                    Text("🗑 The sender deleted this message", fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold, color = cs.error)
+                    Text(
+                        "🗑 The sender deleted this message",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = cs.error
+                    )
                 }
             }
         }
@@ -293,12 +346,15 @@ fun StatusScreen() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val files by AppDb.get(ctx).dao().files("status").collectAsState(initial = emptyList())
-    val loader = remember { ImageLoader.Builder(ctx).components { add(VideoFrameDecoder.Factory()) }.build() }
+    val loader = remember {
+        ImageLoader.Builder(ctx).components { add(VideoFrameDecoder.Factory()) }.build()
+    }
     var ready by remember { mutableStateOf(folderReady(ctx)) }
-    LaunchedEffect(Unit) { Scanner.run(ctx) }
+
+    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { Scanner.run(ctx) } }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         ready = folderReady(ctx)
-        scope.launch { Scanner.run(ctx) }
+        scope.launch(Dispatchers.IO) { Scanner.run(ctx) }
     }
 
     LazyVerticalGrid(
@@ -313,7 +369,8 @@ fun StatusScreen() {
                     AppCard(container = MaterialTheme.colorScheme.errorContainer) {
                         Text(
                             "First give access to the WhatsApp folder in Settings.",
-                            Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onErrorContainer
+                            Modifier.padding(14.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer
                         )
                     }
                     Spacer(Modifier.height(10.dp))
@@ -321,12 +378,15 @@ fun StatusScreen() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("${files.size} status saved", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text("View a status in WhatsApp first, then it will appear here.",
-                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "View a status in WhatsApp first, then it will appear here.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     FilledTonalButton(onClick = {
                         scope.launch {
-                            val n = Scanner.run(ctx)
+                            val n = withContext(Dispatchers.IO) { Scanner.run(ctx) }
                             Toast.makeText(ctx, "$n new statuses saved", Toast.LENGTH_SHORT).show()
                         }
                     }) { Text("🔄 Refresh") }
@@ -335,8 +395,11 @@ fun StatusScreen() {
         }
         if (files.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                EmptyState("🖼", "No statuses yet",
-                    "Open someone’s status in WhatsApp, then tap Refresh.")
+                EmptyState(
+                    "🖼",
+                    "No statuses yet",
+                    "Open someone’s status in WhatsApp, then tap Refresh."
+                )
             }
         }
         items(files, key = { it.id }) { StatusItem(it, loader) }
@@ -349,43 +412,68 @@ fun StatusItem(f: BackupFile, loader: ImageLoader) {
     val scope = rememberCoroutineScope()
     val isVideo = f.name.endsWith(".mp4", true)
     Box(
-        Modifier.fillMaxWidth().aspectRatio(0.72f)
+        Modifier
+            .fillMaxWidth()
+            .aspectRatio(0.72f)
             .clip(RoundedCornerShape(18.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable { openFile(ctx, f.path) }
     ) {
         AsyncImage(
-            model = File(f.path), imageLoader = loader, contentDescription = null,
-            contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
+            model = File(f.path),
+            imageLoader = loader,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
         )
         SourceTag(f.isBiz)
         if (isVideo) {
             Box(
-                Modifier.align(Alignment.Center).size(48.dp).clip(CircleShape)
+                Modifier
+                    .align(Alignment.Center)
+                    .size(48.dp)
+                    .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.5f)),
                 contentAlignment = Alignment.Center
             ) { Text("▶", color = Color.White, fontSize = 20.sp) }
             Text(
-                "VIDEO", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
-                    .clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.55f))
+                "VIDEO",
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.55f))
                     .padding(horizontal = 8.dp, vertical = 3.dp)
             )
         }
         Row(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))))
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f)))
+                )
                 .padding(horizontal = 8.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Pill("⬇ Save") {
                 scope.launch {
                     val ok = withContext(Dispatchers.IO) { saveToGallery(ctx, f) }
-                    Toast.makeText(ctx, if (ok) "Saved to gallery" else "Couldn’t save", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        ctx,
+                        if (ok) "Saved to gallery" else "Couldn’t save",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
             Pill("🗑") {
-                scope.launch(Dispatchers.IO) { File(f.path).delete(); AppDb.get(ctx).dao().deleteFile(f) }
+                scope.launch(Dispatchers.IO) {
+                    File(f.path).delete()
+                    AppDb.get(ctx).dao().deleteFile(f)
+                }
             }
         }
     }
@@ -395,8 +483,11 @@ fun StatusItem(f: BackupFile, loader: ImageLoader) {
 fun SourceTag(isBiz: Boolean) {
     Text(
         if (isBiz) "Business" else "WhatsApp",
-        color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold,
-        modifier = Modifier.clip(RoundedCornerShape(8.dp))
+        color = Color.White,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
             .background(if (isBiz) Color(0xFF1F7A5C) else Color(0xFF2E8B9E))
             .padding(horizontal = 7.dp, vertical = 3.dp)
     )
@@ -409,12 +500,15 @@ fun ViewOnceScreen() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val files by AppDb.get(ctx).dao().files("viewonce").collectAsState(initial = emptyList())
-    val loader = remember { ImageLoader.Builder(ctx).components { add(VideoFrameDecoder.Factory()) }.build() }
+    val loader = remember {
+        ImageLoader.Builder(ctx).components { add(VideoFrameDecoder.Factory()) }.build()
+    }
     var ready by remember { mutableStateOf(folderReady(ctx)) }
-    LaunchedEffect(Unit) { Scanner.run(ctx) }
+
+    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { Scanner.run(ctx) } }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         ready = folderReady(ctx)
-        scope.launch { Scanner.run(ctx) }
+        scope.launch(Dispatchers.IO) { Scanner.run(ctx) }
     }
 
     LazyVerticalGrid(
@@ -429,7 +523,8 @@ fun ViewOnceScreen() {
                     AppCard(container = MaterialTheme.colorScheme.errorContainer) {
                         Text(
                             "First give access to the WhatsApp folder in Settings.",
-                            Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onErrorContainer
+                            Modifier.padding(14.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer
                         )
                     }
                     Spacer(Modifier.height(10.dp))
@@ -437,12 +532,15 @@ fun ViewOnceScreen() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("${files.size} view-once items saved", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text("Saved the moment they arrive. They stay here even after WhatsApp deletes them.",
-                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "Saved the moment they arrive. They stay here even after WhatsApp deletes them.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     FilledTonalButton(onClick = {
                         scope.launch {
-                            val n = Scanner.run(ctx)
+                            val n = withContext(Dispatchers.IO) { Scanner.run(ctx) }
                             Toast.makeText(ctx, "$n new items saved", Toast.LENGTH_SHORT).show()
                         }
                     }) { Text("🔄 Refresh") }
@@ -451,8 +549,11 @@ fun ViewOnceScreen() {
         }
         if (files.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                EmptyState("👁", "No view-once media yet",
-                    "Ask someone to send a view-once photo or video. Auto-download must be on in WhatsApp.")
+                EmptyState(
+                    "👁",
+                    "No view-once media yet",
+                    "Ask someone to send a view-once photo or video. Auto-download must be on in WhatsApp."
+                )
             }
         }
         items(files, key = { it.id }) { StatusItem(it, loader) }
@@ -467,8 +568,11 @@ fun VoiceScreen() {
     val scope = rememberCoroutineScope()
     val files by AppDb.get(ctx).dao().files("voice").collectAsState(initial = emptyList())
     val cs = MaterialTheme.colorScheme
-    LaunchedEffect(Unit) { Scanner.run(ctx) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { scope.launch { Scanner.run(ctx) } }
+
+    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { Scanner.run(ctx) } }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        scope.launch(Dispatchers.IO) { Scanner.run(ctx) }
+    }
     DisposableEffect(Unit) { onDispose { VoicePlayer.stop() } }
 
     LazyColumn(
@@ -480,14 +584,18 @@ fun VoiceScreen() {
                 Text("${files.size} voice messages saved", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
                     "Only voice messages received after monitoring started. Auto-download must be on in WhatsApp.",
-                    fontSize = 12.sp, color = cs.onSurfaceVariant
+                    fontSize = 12.sp,
+                    color = cs.onSurfaceVariant
                 )
             }
         }
         if (files.isEmpty()) {
             item {
-                EmptyState("🎤", "No voice messages yet",
-                    "New voice messages are saved here as soon as they arrive.")
+                EmptyState(
+                    "🎤",
+                    "No voice messages yet",
+                    "New voice messages are saved here as soon as they arrive."
+                )
             }
         }
         items(files, key = { it.id }) { f ->
@@ -495,7 +603,10 @@ fun VoiceScreen() {
             AppCard(container = if (isPlaying) cs.primaryContainer else cs.surface) {
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(
-                        Modifier.size(48.dp).clip(CircleShape).background(cs.primary)
+                        Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(cs.primary)
                             .clickable { VoicePlayer.toggle(f.path) },
                         contentAlignment = Alignment.Center
                     ) { Text(if (isPlaying) "⏹" else "▶", color = cs.onPrimary, fontSize = 18.sp) }
@@ -509,13 +620,24 @@ fun VoiceScreen() {
                         Text(
                             formatTime(if (f.origModified > 0) f.origModified else f.savedAt) +
                                 "  •  ${f.size / 1024} KB",
-                            fontSize = 12.sp, color = cs.onSurfaceVariant
+                            fontSize = 12.sp,
+                            color = cs.onSurfaceVariant
                         )
                     }
-                    Text("🗑", fontSize = 20.sp, modifier = Modifier.clip(CircleShape).clickable {
-                        if (isPlaying) VoicePlayer.stop()
-                        scope.launch(Dispatchers.IO) { File(f.path).delete(); AppDb.get(ctx).dao().deleteFile(f) }
-                    }.padding(8.dp))
+                    Text(
+                        "🗑",
+                        fontSize = 20.sp,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable {
+                                if (isPlaying) VoicePlayer.stop()
+                                scope.launch(Dispatchers.IO) {
+                                    File(f.path).delete()
+                                    AppDb.get(ctx).dao().deleteFile(f)
+                                }
+                            }
+                            .padding(8.dp)
+                    )
                 }
             }
         }
@@ -535,10 +657,15 @@ fun rememberFolderPicker(onDone: () -> Unit): (Boolean) -> Unit {
     val ctx = LocalContext.current
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
-            ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            ctx.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
             val p = Prefs.get(ctx)
             p.edit().putString("tree", uri.toString()).apply()
-            if (!p.contains("enabled_at")) p.edit().putLong("enabled_at", System.currentTimeMillis()).apply()
+            if (!p.contains("enabled_at")) {
+                p.edit().putLong("enabled_at", System.currentTimeMillis()).apply()
+            }
             val root = DocumentFile.fromTreeUri(ctx, uri)
             val okNames = setOf("Media", ".Statuses", "WhatsApp Voice Notes")
             val looksRight = root != null && (
@@ -548,7 +675,8 @@ fun rememberFolderPicker(onDone: () -> Unit): (Boolean) -> Unit {
                 )
             Toast.makeText(
                 ctx,
-                if (looksRight) "Folder looks right ✅" else "This doesn’t look like WhatsApp’s Media folder. Please choose again.",
+                if (looksRight) "Folder looks right ✅"
+                else "This doesn’t look like WhatsApp’s Media folder. Please choose again.",
                 Toast.LENGTH_LONG
             ).show()
             onDone()
@@ -580,20 +708,25 @@ fun SetupSteps() {
             Column(Modifier.padding(16.dp)) {
                 Text(
                     if (readyCount == 3) "All set 🎉" else "Setup: $readyCount/3 ready",
-                    fontWeight = FontWeight.Bold, fontSize = 18.sp, color = cs.onPrimaryContainer
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = cs.onPrimaryContainer
                 )
                 Spacer(Modifier.height(8.dp))
                 LinearProgressIndicator(
                     progress = { readyCount / 3f },
                     modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                    color = cs.primary, trackColor = cs.surface
+                    color = cs.primary,
+                    trackColor = cs.surface
                 )
             }
         }
 
         SetupCard(
-            1, "Permission to read messages", notifOk,
-            "Needed to save deleted messages. If you see ‘App was denied access’: App info > ⋮ (top right) > ‘Allow restricted settings’, then come back.",
+            n = 1,
+            title = "Permission to read messages",
+            ok = notifOk,
+            help = "Needed to save deleted messages. If you see ‘App was denied access’: App info > ⋮ (top right) > ‘Allow restricted settings’, then come back.",
             highlight = current == 0
         ) {
             Button(onClick = { ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) {
@@ -602,7 +735,10 @@ fun SetupSteps() {
             Spacer(Modifier.width(8.dp))
             OutlinedButton(onClick = {
                 ctx.startActivity(
-                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}"))
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:${ctx.packageName}")
+                    )
                 )
             }) { Text("App info") }
         }
@@ -615,11 +751,20 @@ fun SetupSteps() {
             Build.VERSION.SDK_INT >= 30 -> "Access granted ✅ Both WhatsApp and Business will be scanned."
             else -> "Choose a folder: on the screen that opens, tap ‘Use this folder’ at the bottom. The folder must be named ‘Media’."
         }
-        SetupCard(2, "Status, voice and view-once files", filesOk, filesHelp, highlight = current == 1) {
+        SetupCard(
+            n = 2,
+            title = "Status, voice and view-once files",
+            ok = filesOk,
+            help = filesHelp,
+            highlight = current == 1
+        ) {
             if (Build.VERSION.SDK_INT >= 30) {
                 Button(onClick = {
                     ctx.startActivity(
-                        Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${ctx.packageName}"))
+                        Intent(
+                            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:${ctx.packageName}")
+                        )
                     )
                 }) { Text("Allow") }
                 Spacer(Modifier.width(8.dp))
@@ -632,13 +777,18 @@ fun SetupSteps() {
         }
 
         SetupCard(
-            3, "Allow background running", batteryOk,
-            "Otherwise your phone may stop the app and new messages will be missed.",
+            n = 3,
+            title = "Allow background running",
+            ok = batteryOk,
+            help = "Otherwise your phone may stop the app and new messages will be missed.",
             highlight = current == 2
         ) {
             Button(onClick = {
                 ctx.startActivity(
-                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}"))
+                    Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:${ctx.packageName}")
+                    )
                 )
             }) { Text("Allow") }
         }
@@ -663,13 +813,19 @@ fun SettingsScreen() {
                 Text("Deleted-message text", fontWeight = FontWeight.Bold)
                 Text(
                     "If WhatsApp is set to another language, enter the text it shows for a deleted message here.",
-                    fontSize = 12.sp, color = cs.onSurfaceVariant
+                    fontSize = 12.sp,
+                    color = cs.onSurfaceVariant
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = custom,
-                    onValueChange = { custom = it; Prefs.get(ctx).edit().putString("custom_deleted", it).apply() },
-                    singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
+                    onValueChange = {
+                        custom = it
+                        Prefs.get(ctx).edit().putString("custom_deleted", it).apply()
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
@@ -677,12 +833,15 @@ fun SettingsScreen() {
         AppCard {
             Column(Modifier.padding(16.dp)) {
                 Text("App version", fontWeight = FontWeight.Bold)
-                Text("v${currentVersionName(ctx)}  (build ${currentVersionCode(ctx)})",
-                    fontSize = 13.sp, color = cs.onSurfaceVariant)
+                Text(
+                    "v${currentVersionName(ctx)}  (build ${currentVersionCode(ctx)})",
+                    fontSize = 13.sp,
+                    color = cs.onSurfaceVariant
+                )
                 Spacer(Modifier.height(8.dp))
                 FilledTonalButton(onClick = {
                     scope.launch {
-                        val u = Updater.latest()
+                        val u = withContext(Dispatchers.IO) { Updater.latest() }
                         val msg = when {
                             u == null -> "Couldn’t check for updates (no internet or no release found)"
                             u.versionCode > currentVersionCode(ctx) -> "New version ${u.name} is available"
@@ -690,7 +849,7 @@ fun SettingsScreen() {
                         }
                         Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
                         if (u != null && u.versionCode > currentVersionCode(ctx)) {
-                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u.url)))
                         }
                     }
                 }) { Text("🔄 Check for updates") }
@@ -703,7 +862,7 @@ fun SettingsScreen() {
                 Spacer(Modifier.height(8.dp))
                 FilledTonalButton(onClick = {
                     scope.launch {
-                        val n = Scanner.run(ctx)
+                        val n = withContext(Dispatchers.IO) { Scanner.run(ctx) }
                         Toast.makeText(ctx, "$n new files saved", Toast.LENGTH_SHORT).show()
                     }
                 }) { Text("Scan now") }
@@ -723,7 +882,8 @@ fun SettingsScreen() {
 
         Text(
             "Privacy: your messages, statuses, voice messages and view-once media stay on your phone. The internet is used only to check for a new version. This app is separate from WhatsApp and is not part of it.",
-            fontSize = 12.sp, color = cs.onSurfaceVariant
+            fontSize = 12.sp,
+            color = cs.onSurfaceVariant
         )
         Spacer(Modifier.height(8.dp))
     }
@@ -731,25 +891,68 @@ fun SettingsScreen() {
 
 @Composable
 fun SetupCard(
-    n: Int, title: String, ok: Boolean, help: String, highlight: Boolean = false,
+    n: Int,
+    title: String,
+    ok: Boolean,
+    help: String,
+    highlight: Boolean,
     actions: @Composable RowScope.() -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
-    AppCard(border = if (highlight) BorderStroke(2.dp, cs.primary) else null) {
-        Column(Modifier.padding(16.dp)) {
+    val border = when {
+        ok -> BorderStroke(1.dp, cs.primary.copy(alpha = 0.4f))
+        highlight -> BorderStroke(1.5.dp, cs.primary)
+        else -> BorderStroke(1.dp, cs.outlineVariant)
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (ok) cs.surfaceVariant.copy(alpha = 0.5f) else cs.surface
+        ),
+        border = border
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    Modifier.size(28.dp).clip(CircleShape).background(cs.primary),
+                    Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(if (ok) cs.primary else cs.secondaryContainer),
                     contentAlignment = Alignment.Center
-                ) { Text("$n", color = cs.onPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
+                ) {
+                    Text(
+                        if (ok) "✓" else n.toString(),
+                        color = if (ok) cs.onPrimary else cs.onSecondaryContainer,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
                 Spacer(Modifier.width(10.dp))
-                Text(title, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                StatusChip(ok)
+                Text(
+                    title,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                if (ok) {
+                    Text(
+                        "Done",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = cs.primary
+                    )
+                }
             }
-            Spacer(Modifier.height(6.dp))
-            Text(help, fontSize = 12.sp, color = cs.onSurfaceVariant)
-            Spacer(Modifier.height(10.dp))
-            Row(content = actions)
+            Text(
+                help,
+                fontSize = 13.sp,
+                color = cs.onSurfaceVariant
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                content = actions
+            )
         }
     }
 }
