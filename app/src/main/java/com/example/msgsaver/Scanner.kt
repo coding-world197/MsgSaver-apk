@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Environment
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -41,6 +42,7 @@ private interface Node {
     val name: String
     val isDir: Boolean
     val modified: Long
+    val length: Long
     fun children(): List<Node>
     fun child(name: String): Node?
     fun open(ctx: Context): InputStream?
@@ -50,6 +52,7 @@ private class FNode(val f: File) : Node {
     override val name: String get() = f.name
     override val isDir: Boolean get() = f.isDirectory
     override val modified: Long get() = f.lastModified()
+    override val length: Long get() = f.length()
     override fun children(): List<Node> = f.listFiles()?.map { FNode(it) } ?: emptyList()
     override fun child(name: String): Node? = File(f, name).takeIf { it.exists() }?.let { FNode(it) }
     override fun open(ctx: Context): InputStream? = try { f.inputStream() } catch (e: Exception) { null }
@@ -59,19 +62,27 @@ private class DNode(val d: DocumentFile) : Node {
     override val name: String get() = d.name ?: ""
     override val isDir: Boolean get() = d.isDirectory
     override val modified: Long get() = d.lastModified()
+    override val length: Long get() = d.length()
     override fun children(): List<Node> = d.listFiles().map { DNode(it) }
     override fun child(name: String): Node? = d.findFile(name)?.let { DNode(it) }
     override fun open(ctx: Context): InputStream? =
         try { ctx.contentResolver.openInputStream(d.uri) } catch (e: Exception) { null }
 }
 
-/** Copies new Status and Voice-note files from WhatsApp's media folder into app-private storage. */
+/** Copies new Status, Voice-note and view-once files from WhatsApp's media folder into app-private storage. */
 object Scanner {
     private val mutex = Mutex()
+    private val PRIVATE_TYPES = listOf("WhatsApp Images", "WhatsApp Video")
 
     /** Returns number of newly saved files. */
     suspend fun run(ctx: Context): Int = mutex.withLock {
         withContext(Dispatchers.IO) { doScan(ctx.applicationContext) }
+    }
+
+    /** FileObserver se aane wali call (instant capture, koi 3s wait nahi). */
+    suspend fun captureViewOnce(ctx: Context, file: File, parent: File) {
+        val biz = parent.absolutePath.contains("w4b")
+        saveViewOnce(ctx.applicationContext, AppDb.get(ctx).dao(), FNode(file), biz)
     }
 
     private suspend fun doScan(ctx: Context): Int {
@@ -111,6 +122,13 @@ object Scanner {
                 }
             }
 
+            // View-once (Private folders) — observer miss ho jaye to yeh backup sweep utha lega
+            for (t in PRIVATE_TYPES) {
+                val priv = root.child(t)?.child("Private") ?: continue
+                priv.children().forEach { f ->
+                    if (!f.isDir && saveViewOnce(ctx, dao, f, biz)) saved++
+                }
+            }
         }
         return saved
     }
@@ -140,6 +158,41 @@ object Scanner {
                 isBiz = biz
             )
         )
+        return true
+    }
+
+    /**
+     * View-once ke liye alag path: 3 second ka wait nahi, copy retry loop.
+     * WhatsApp yeh file view karte hi delete kar deta hai, isliye turant copy zaroori hai.
+     */
+    private suspend fun saveViewOnce(ctx: Context, dao: AppDao, f: Node, biz: Boolean): Boolean {
+        val name = f.name
+        if (name.isEmpty() || name.startsWith(".nomedia")) return false
+        val key = "${f.modified}_${if (biz) "biz_" else ""}$name"
+        if (dao.fileExists("viewonce", key) > 0) return false
+
+        val dir = File(ctx.filesDir, "backup/viewonce").apply { mkdirs() }
+        val out = File(dir, key)
+        var copied = 0L
+        for (attempt in 0 until 6) {
+            try {
+                f.open(ctx)?.use { i -> out.outputStream().use { o -> i.copyTo(o, 64 * 1024) } }
+                copied = out.length()
+                if (copied > 0 && copied == f.length) break
+            } catch (_: Exception) { }
+            if (copied > 0 && attempt >= 3) break
+            delay(120L * (attempt + 1))
+        }
+        if (copied == 0L) { out.delete(); return false }
+
+        dao.insertFile(
+            BackupFile(
+                category = "viewonce", name = key, path = out.absolutePath,
+                origModified = f.modified, savedAt = System.currentTimeMillis(), size = copied,
+                isBiz = biz
+            )
+        )
+        Armer.hit()
         return true
     }
 }
