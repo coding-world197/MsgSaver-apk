@@ -426,7 +426,24 @@ fun StatusItem(f: BackupFile, loader: ImageLoader) {
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
-        SourceTag(f.isBiz)
+        Row(
+            Modifier.align(Alignment.TopStart).padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            SourceTag(f.isBiz)
+            if (f.name.startsWith("notif_")) NotifTag()
+        }
+        Text(
+            formatTime(f.savedAt),
+            color = Color.White,
+            fontSize = 10.sp,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.Black.copy(alpha = 0.55f))
+                .padding(horizontal = 6.dp, vertical = 3.dp)
+        )
         if (isVideo) {
             Column(
                 Modifier.align(Alignment.Center),
@@ -806,7 +823,7 @@ fun SettingsScreen() {
     val scope = rememberCoroutineScope()
     val cs = MaterialTheme.colorScheme
     var custom by remember { mutableStateOf(Prefs.get(ctx).getString("custom_deleted", "") ?: "") }
-    var fb by remember { mutableStateOf(Prefs.get(ctx).getBoolean("notif_fallback", true)) }
+    var fb by remember { mutableStateOf(Prefs.get(ctx).getBoolean("notif_fallback", false)) }
 
     Column(
         Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
