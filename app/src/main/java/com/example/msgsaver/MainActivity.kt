@@ -824,6 +824,7 @@ fun SettingsScreen() {
     val cs = MaterialTheme.colorScheme
     var custom by remember { mutableStateOf(Prefs.get(ctx).getString("custom_deleted", "") ?: "") }
     var fb by remember { mutableStateOf(Prefs.get(ctx).getBoolean("notif_fallback", false)) }
+    var logText by remember { mutableStateOf<String?>(null) }
 
     Column(
         Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
@@ -911,6 +912,31 @@ fun SettingsScreen() {
 
         AppCard {
             Column(Modifier.padding(16.dp)) {
+                Text("Diagnostics", fontWeight = FontWeight.Bold)
+                Text(
+                    "View-once file kahan aati hai, uska log. Fallback OFF rakh kar test karo.",
+                    fontSize = 12.sp,
+                    color = cs.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = {
+                        scope.launch {
+                            logText = withContext(Dispatchers.IO) { Probe.read(ctx) }
+                        }
+                    }) { Text("Show log") }
+                    OutlinedButton(onClick = {
+                        scope.launch(Dispatchers.IO) {
+                            Probe.logPath(ctx).delete()
+                            logText = ""
+                        }
+                    }) { Text("Clear") }
+                }
+            }
+        }
+
+        AppCard {
+            Column(Modifier.padding(16.dp)) {
                 Text("Data", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 FilledTonalButton(onClick = {
@@ -939,6 +965,29 @@ fun SettingsScreen() {
             color = cs.onSurfaceVariant
         )
         Spacer(Modifier.height(8.dp))
+    }
+
+    logText?.let { txt ->
+        AlertDialog(
+            onDismissRequest = { logText = null },
+            title = { Text("Path log") },
+            text = {
+                Text(
+                    txt.ifBlank { "(khaali — pehle view-once bhejwao)" },
+                    fontSize = 10.sp,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { logText = null }) { Text("Close") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    scope.launch(Dispatchers.IO) { Probe.logPath(ctx).delete() }
+                    logText = null
+                }) { Text("Clear") }
+            }
+        )
     }
 }
 
