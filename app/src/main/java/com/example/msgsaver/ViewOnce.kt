@@ -90,7 +90,7 @@ object Armer {
         val app = ctx.applicationContext
         val t = System.currentTimeMillis()
         arm()
-        if (!Prefs.get(app).getBoolean("notif_fallback", false)) return
+        if (!Prefs.get(app).getBoolean("notif_fallback", true)) return
         if (bmp == null) return
 
         scope.launch {
