@@ -31,6 +31,7 @@ interface AppDao {
     
     // messages
     @Insert suspend fun insert(m: SavedMessage)
+    @Query("SELECT * FROM files WHERE id = :id") suspend fun byId(id: Long): BackupFile?
 
     @Query("SELECT * FROM files WHERE category = 'viewonce' AND name LIKE 'notif\\_%' ESCAPE '\\'")
     suspend fun notifItems(): List<BackupFile>
