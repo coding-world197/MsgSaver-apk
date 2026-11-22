@@ -6,10 +6,6 @@ import android.os.FileObserver
 import kotlinx.coroutines.*
 import java.io.File
 
-/**
- * View-once media ko turant pakadta hai.
- * "Private" folders mein sirf view-once media aata hai, isliye folder khud hi signal hai.
- */
 object ViewOnceWatcher {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val observers = mutableListOf<FileObserver>()
@@ -37,6 +33,10 @@ object ViewOnceWatcher {
                 runCatching { parentObs.startWatching() }
                 observers += parentObs
             }
+
+            // Naye WhatsApp versions view-once media yahan rakhte hain
+            val shared = File(mediaRoot.parentFile, ".Shared")
+            if (shared.isDirectory) attachShared(app, shared, mediaRoot)
         }
     }
 
@@ -53,6 +53,21 @@ object ViewOnceWatcher {
         observers += obs
     }
 
+    /** .Shared mein normal media bhi aata hai, isliye sirf armed window mein uthao. */
+    private fun attachShared(ctx: Context, dir: File, mediaRoot: File) {
+        val obs = object : FileObserver(dir, CREATE or MOVED_TO) {
+            override fun onEvent(event: Int, name: String?) {
+                name ?: return
+                if (!Armer.isArmed()) return
+                val f = File(dir, name)
+                if (!f.isFile) return
+                scope.launch { runCatching { Scanner.captureViewOnce(ctx, f, mediaRoot) } }
+            }
+        }
+        runCatching { obs.startWatching() }
+        observers += obs
+    }
+
     @Synchronized
     fun stop() {
         observers.forEach { runCatching { it.stopWatching() } }
@@ -61,39 +76,33 @@ object ViewOnceWatcher {
     }
 }
 
-/**
- * Asli source Private folder hai. Notification wala preview sirf LAST RESORT hai
- * (jab auto-download off ho). Default OFF — warna Once tab har aam photo se bhar jata hai.
- * ON hone par bhi yeh khud ko theek karta hai: agar baad mein regular photo ya
- * Private file mil jaye to provisional item delete ho jata hai.
- */
 object Armer {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var until = 0L
     @Volatile private var lastHit = 0L
     @Volatile private var lastNotifSave = 0L
 
+    fun arm(ttlMs: Long = 20_000L) { until = System.currentTimeMillis() + ttlMs }
+    fun isArmed() = System.currentTimeMillis() < until
     fun hit() { lastHit = System.currentTimeMillis() }
 
     fun armWithBitmap(ctx: Context, bmp: Bitmap?) {
         val app = ctx.applicationContext
+        val t = System.currentTimeMillis()
+        arm()
         if (!Prefs.get(app).getBoolean("notif_fallback", false)) return
         if (bmp == null) return
 
-        val t = System.currentTimeMillis()
         scope.launch {
             delay(3000)
-
-            // Private folder se file aa gayi -> preview ki zaroorat nahi
             if (lastHit >= t) return@launch
-
-            // Duplicate notification guard
+            if (Scanner.regularImageSince(app, t - 5000L)) return@launch
             if (System.currentTimeMillis() - lastNotifSave < 2000L) return@launch
             lastNotifSave = System.currentTimeMillis()
 
             val hitBefore = lastHit
             val id = saveBitmap(app, bmp) ?: return@launch
 
-            // 3 minute tak nazar rakho: agar asli file aa jaye to provisional hata do
             repeat(60) {
                 delay(3000)
                 if (lastHit > hitBefore) { deleteItem(app, id); return@launch }
