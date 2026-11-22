@@ -1,4 +1,3 @@
-
 package com.example.msgsaver
 
 import android.content.Context
@@ -338,9 +337,22 @@ object Scanner {
         return true
     }
 
+    /** File ka asli type header bytes se. Extension par bharosa nahi. */
+    private fun sniffExt(head: ByteArray): String? {
+        fun at(i: Int) = if (i < head.size) head[i].toInt() and 0xFF else -1
+        if (at(0) == 0xFF && at(1) == 0xD8 && at(2) == 0xFF) return "jpg"
+        if (at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E) return "png"
+        if (at(0) == 0x47 && at(1) == 0x49 && at(2) == 0x46) return "gif"
+        if (head.size >= 12 && String(head, 4, 4, Charsets.US_ASCII) == "ftyp") return "mp4"
+        if (head.size >= 4 && String(head, 0, 4, Charsets.US_ASCII) == "OggS") return "ogg"
+        if (at(0) == 0x1A && at(1) == 0x45) return "webm"
+        if (head.size >= 4 && String(head, 0, 4, Charsets.US_ASCII) == "RIFF") return "webp"
+        return null
+    }
+
     /**
      * View-once ke liye alag path:
-     * 3 second ka wait nahi, copy retry loop.
+     * 3 second ka wait nahi, copy retry loop, aur type header se.
      */
     private suspend fun saveViewOnce(
         ctx: Context,
@@ -355,16 +367,33 @@ object Scanner {
             return false
         }
 
-        val key =
+        val keyBase =
             "${f.modified}_${if (biz) "biz_" else ""}$name"
 
-        if (dao.fileExists("viewonce", key) > 0) {
+        if (dao.fileExists("viewonce", keyBase) > 0) {
+            return false
+        }
+
+        // Header padho -> asli type
+        var ext: String? = null
+        runCatching {
+            f.open(ctx)?.use { i ->
+                val head = ByteArray(16)
+                val n = i.read(head)
+                if (n > 0) ext = sniffExt(head.copyOf(n))
+            }
+        }
+
+        val realExt = ext
+        if (realExt == null) {
+            Probe.log(ctx, "SKIP unknown-type: $name (${f.length}b)")
             return false
         }
 
         val dir = File(ctx.filesDir, "backup/viewonce")
             .apply { mkdirs() }
 
+        val key = "$keyBase.$realExt"
         val out = File(dir, key)
 
         var copied = 0L
@@ -396,6 +425,7 @@ object Scanner {
 
         if (copied == 0L) {
             out.delete()
+            Probe.log(ctx, "SKIP copy-failed: $name")
             return false
         }
 
@@ -412,6 +442,7 @@ object Scanner {
         )
 
         Armer.hit()
+        Probe.log(ctx, "SAVED $realExt ${copied}b <- $name")
 
         return true
     }
