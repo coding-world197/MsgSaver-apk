@@ -29,6 +29,7 @@ class WhatsAppListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         ViewOnceWatcher.start(applicationContext)
+        Probe.start(applicationContext)
         // Background loop: copy new status / voice / view-once files every 30 seconds
         loop?.cancel()
         loop = scope.launch {
