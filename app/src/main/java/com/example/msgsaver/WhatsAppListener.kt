@@ -1,6 +1,8 @@
 package com.example.msgsaver
 
 import android.app.Notification
+import android.graphics.Bitmap
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import kotlinx.coroutines.*
@@ -16,9 +18,6 @@ class WhatsAppListener : NotificationListenerService() {
         "message was deleted",
         "यह मैसेज डिलीट किया गया था"
     )
-
-    // Notification text that means "media only" — view-once ke liye trigger
-    private val mediaPhrases = setOf("photo", "video", "voice message")
 
     private fun isDeletedText(text: String): Boolean {
         val t = text.lowercase()
@@ -42,6 +41,7 @@ class WhatsAppListener : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         ViewOnceWatcher.stop()
+        Probe.stop()
         loop?.cancel()
     }
 
@@ -53,15 +53,17 @@ class WhatsAppListener : NotificationListenerService() {
         val extras = n.extras
         val sender = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: return
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-        Probe.log(
-            applicationContext,
-            "NOTIF text=${text?.take(40)} pic=${extras.containsKey(Notification.EXTRA_PICTURE)} " +
-                "keys=${extras.keySet()}"
-        )
 
-        // View-once detect: media notification mein sirf "Photo" / "Video" / "Voice message" aata hai
-        if (text != null && text.trim().lowercase() in mediaPhrases) {
-            val bmp = extras.getParcelable(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap
+        val bmp = firstBitmap(extras)
+        val looksMedia = bmp != null ||
+            text?.contains("photo", true) == true ||
+            text?.contains("video", true) == true ||
+            text?.contains("voice", true) == true
+
+        Probe.log(applicationContext, "NOTIF text=${text?.take(40)} bmp=${bmp != null}")
+
+        if (looksMedia) {
+            Armer.arm()
             Armer.armWithBitmap(applicationContext, bmp)
         }
 
@@ -81,8 +83,19 @@ class WhatsAppListener : NotificationListenerService() {
         }
     }
 
+    /** Android 12+ image EXTRA_PICTURE mein nahi, reduced.images mein deta hai. */
+    private fun firstBitmap(extras: Bundle): Bitmap? {
+        @Suppress("DEPRECATION")
+        (extras.getParcelable(Notification.EXTRA_PICTURE) as? Bitmap)?.let { return it }
+        extras.getParcelableArray(Notification.EXTRA_REDUCED_IMAGES)?.forEach { p ->
+            if (p is Bitmap) return p
+        }
+        return null
+    }
+
     override fun onDestroy() {
         ViewOnceWatcher.stop()
+        Probe.stop()
         scope.cancel()
         super.onDestroy()
     }
