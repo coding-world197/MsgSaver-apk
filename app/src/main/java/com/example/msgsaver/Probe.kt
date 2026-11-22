@@ -16,7 +16,13 @@ object Probe {
     fun start(ctx: Context) {
         if (obs.isNotEmpty()) return
         val app = ctx.applicationContext
-        for ((_, mediaRoot) in directRoots()) {
+        val roots = directRoots()
+        log(app, "=== probe start: roots=${roots.size} allFiles=${hasAllFiles()} ===")
+        if (roots.isEmpty()) {
+            log(app, "!! All files access missing ya WhatsApp folder nahi mila")
+            return
+        }
+        for ((_, mediaRoot) in roots) {
             val waDir = mediaRoot.parentFile ?: continue
             val targets = mutableListOf<File>()
             targets += File(waDir, ".Shared")
@@ -25,9 +31,14 @@ object Probe {
                 targets += d
                 d.listFiles()?.filter { it.isDirectory }?.forEach { targets += it }
             }
-            targets.filter { it.isDirectory }.forEach { attach(app, it) }
+            targets.forEach { t ->
+                if (!t.isDirectory) {
+                    log(app, "skip (no dir) ${t.absolutePath}")
+                    return@forEach
+                }
+                attach(app, t)
+            }
         }
-        log(app, "=== probe started ===")
     }
 
     private fun attach(ctx: Context, dir: File) {
@@ -37,7 +48,8 @@ object Probe {
                 log(ctx, "${dir.absolutePath}/$name")
             }
         }
-        runCatching { o.startWatching() }
+        val ok = runCatching { o.startWatching() }.isSuccess
+        log(ctx, "watch ${if (ok) "OK" else "FAIL"} ${dir.absolutePath}")
         obs += o
     }
 
