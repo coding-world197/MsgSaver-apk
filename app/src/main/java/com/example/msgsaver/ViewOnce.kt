@@ -29,7 +29,6 @@ object ViewOnceWatcher {
                 val priv = File(parent, "Private")
                 if (priv.isDirectory) attach(app, priv, parent)
 
-                // "Private" folder lazily banta hai -> parent par nazar rakho
                 val parentObs = object : FileObserver(parent, CREATE or MOVED_TO) {
                     override fun onEvent(event: Int, name: String?) {
                         if (name == "Private" && priv.isDirectory) attach(app, priv, parent)
@@ -63,62 +62,70 @@ object ViewOnceWatcher {
 }
 
 /**
- * Notification sirf trigger hai. Asli file Private folder se aati hai.
- * Fallback (notification preview) sirf tab jab na view-once file mile, na normal photo aayi ho.
+ * Asli source Private folder hai. Notification wala preview sirf LAST RESORT hai
+ * (jab auto-download off ho). Default OFF — warna Once tab har aam photo se bhar jata hai.
+ * ON hone par bhi yeh khud ko theek karta hai: agar baad mein regular photo ya
+ * Private file mil jaye to provisional item delete ho jata hai.
  */
 object Armer {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    @Volatile private var until = 0L
     @Volatile private var lastHit = 0L
     @Volatile private var lastNotifSave = 0L
 
-    fun arm(ttlMs: Long = 90_000L) { until = System.currentTimeMillis() + ttlMs }
-    fun isArmed() = System.currentTimeMillis() < until
     fun hit() { lastHit = System.currentTimeMillis() }
 
     fun armWithBitmap(ctx: Context, bmp: Bitmap?) {
         val app = ctx.applicationContext
-        // User fallback band kar sakta hai (Settings)
-        if (!Prefs.get(app).getBoolean("notif_fallback", true)) return
-
-        val t = System.currentTimeMillis()
-        arm()
+        if (!Prefs.get(app).getBoolean("notif_fallback", false)) return
         if (bmp == null) return
 
+        val t = System.currentTimeMillis()
         scope.launch {
             delay(3000)
 
-            // 1) View-once file mil gayi -> fallback ki zaroorat nahi
+            // Private folder se file aa gayi -> preview ki zaroorat nahi
             if (lastHit >= t) return@launch
 
-            // 2) Normal photo aayi (regular folder mein nayi file) -> yeh view-once nahi hai
-            if (Scanner.regularImageSince(app, t)) return@launch
-
-            // 3) WhatsApp ne same notification dobara bheji -> duplicate na banao
+            // Duplicate notification guard
             if (System.currentTimeMillis() - lastNotifSave < 2000L) return@launch
             lastNotifSave = System.currentTimeMillis()
 
-            saveBitmap(app, bmp)
+            val hitBefore = lastHit
+            val id = saveBitmap(app, bmp) ?: return@launch
+
+            // 3 minute tak nazar rakho: agar asli file aa jaye to provisional hata do
+            repeat(60) {
+                delay(3000)
+                if (lastHit > hitBefore) { deleteItem(app, id); return@launch }
+                if (Scanner.regularImageSince(app, t - 5000L)) { deleteItem(app, id); return@launch }
+            }
         }
     }
 
-    private suspend fun saveBitmap(ctx: Context, bmp: Bitmap) {
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val dir = File(ctx.filesDir, "backup/viewonce").apply { mkdirs() }
-                val key = "notif_${System.currentTimeMillis()}.jpg"
-                val out = File(dir, key)
-                out.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
-                if (out.length() == 0L) { out.delete(); return@runCatching }
-                AppDb.get(ctx).dao().insertFile(
-                    BackupFile(
-                        category = "viewonce", name = key, path = out.absolutePath,
-                        origModified = System.currentTimeMillis(), savedAt = System.currentTimeMillis(),
-                        size = out.length()
-                    )
+    private suspend fun saveBitmap(ctx: Context, bmp: Bitmap): Long? = withContext(Dispatchers.IO) {
+        runCatching {
+            val dir = File(ctx.filesDir, "backup/viewonce").apply { mkdirs() }
+            val key = "notif_${System.currentTimeMillis()}.jpg"
+            val out = File(dir, key)
+            out.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+            if (out.length() == 0L) { out.delete(); return@runCatching null }
+            val id = AppDb.get(ctx).dao().insertFile(
+                BackupFile(
+                    category = "viewonce", name = key, path = out.absolutePath,
+                    origModified = System.currentTimeMillis(),
+                    savedAt = System.currentTimeMillis(), size = out.length()
                 )
-                hit()
-            }
+            )
+            if (id > 0) id else null
+        }.getOrNull()
+    }
+
+    private suspend fun deleteItem(ctx: Context, id: Long) = withContext(Dispatchers.IO) {
+        runCatching {
+            val dao = AppDb.get(ctx).dao()
+            val f = dao.byId(id) ?: return@runCatching
+            File(f.path).delete()
+            dao.deleteFile(f)
         }
     }
 }
