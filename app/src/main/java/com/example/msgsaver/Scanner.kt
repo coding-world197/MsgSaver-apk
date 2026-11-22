@@ -163,7 +163,7 @@ object Scanner {
         since: Long
     ): Boolean = withContext(Dispatchers.IO) {
 
-        val tolerance = since - 2000L
+        val tolerance = since - 5000L
 
         for ((_, mediaRoot) in directRoots()) {
 
