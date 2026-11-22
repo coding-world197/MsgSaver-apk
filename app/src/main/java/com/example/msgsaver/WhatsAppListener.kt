@@ -53,6 +53,11 @@ class WhatsAppListener : NotificationListenerService() {
         val extras = n.extras
         val sender = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: return
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+        Probe.log(
+            applicationContext,
+            "NOTIF text=${text?.take(40)} pic=${extras.containsKey(Notification.EXTRA_PICTURE)} " +
+                "keys=${extras.keySet()}"
+        )
 
         // View-once detect: media notification mein sirf "Photo" / "Video" / "Voice message" aata hai
         if (text != null && text.trim().lowercase() in mediaPhrases) {
