@@ -49,7 +49,6 @@ object ReelDownloader {
                 "Couldn't open that link. It may be a private account, or the post was removed."
             )
 
-        // Video pehle, phir photos (carousel ke liye dono)
         val urls = LinkedHashSet<Pair<String, Boolean>>()
         VIDEO_PATTERNS.forEach { p -> p.findAll(html).forEach { urls += clean(it.groupValues[1]) to true } }
         IMAGE_PATTERN.findAll(html).forEach { urls += clean(it.groupValues[1]) to false }
