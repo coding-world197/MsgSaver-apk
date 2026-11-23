@@ -218,7 +218,7 @@ fun MessagesScreen(all: List<SavedMessage>) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { granted = hasNotificationAccess(ctx) }
 
     var onlyDeleted by remember { mutableStateOf(false) }
-    var source by remember { mutableStateOf("all") } // all | whatsapp | instagram
+    var source by remember { mutableStateOf("all") }
     var query by remember { mutableStateOf("") }
     val delCount = all.count { it.isDeleted }
     val igCount = all.count { it.source == "instagram" }
