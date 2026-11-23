@@ -10,7 +10,8 @@ data class SavedMessage(
     val sender: String,
     val text: String,
     val timestamp: Long,
-    val isDeleted: Boolean = false
+    val isDeleted: Boolean = false,
+    val source: String = "whatsapp"   // "whatsapp" or "instagram"
 )
 
 @Entity(tableName = "files", indices = [Index(value = ["category", "name"], unique = true)])
@@ -27,17 +28,8 @@ data class BackupFile(
 
 @Dao
 interface AppDao {
-
-    
     // messages
     @Insert suspend fun insert(m: SavedMessage)
-    @Query("SELECT * FROM files WHERE id = :id") suspend fun byId(id: Long): BackupFile?
-
-    @Query("SELECT * FROM files WHERE category = 'viewonce' AND name LIKE 'notif\\_%' ESCAPE '\\'")
-    suspend fun notifItems(): List<BackupFile>
-
-    @Query("DELETE FROM files WHERE category = 'viewonce' AND name LIKE 'notif\\_%' ESCAPE '\\'")
-    suspend fun deleteNotifItems()
 
     @Query("SELECT * FROM messages ORDER BY timestamp DESC")
     fun messages(): Flow<List<SavedMessage>>
@@ -66,7 +58,7 @@ interface AppDao {
     @Query("DELETE FROM files") suspend fun clearFiles()
 }
 
-@Database(entities = [SavedMessage::class, BackupFile::class], version = 3, exportSchema = false)
+@Database(entities = [SavedMessage::class, BackupFile::class], version = 4, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): AppDao
     companion object {

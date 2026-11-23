@@ -43,3 +43,11 @@ so you can confirm both accounts are being picked up.
 v1.6 (build 7) - Fixed repo name mismatch: Updater now points to coding-world197/MsgSaver-apk
 
 v1.7 (build 8) - Removed the Photos tab and its scanning. App is back to Messages, Status, Voice, Settings.
+
+v1.8 (build 9)
+
+v1.9 (build 10) - Instagram DMs are now saved too, the same way WhatsApp messages are.
+Messages tab has a "Both apps / WhatsApp / Instagram" filter, and each message shows a small
+💬 or 📸 icon. Important: Instagram doesn't send a "message deleted" notification, so deleted
+Instagram DMs can't be flagged the way deleted WhatsApp messages are — only what was saved
+before deletion stays visible.

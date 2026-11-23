@@ -1,8 +1,6 @@
 package com.example.msgsaver
 
 import android.app.Notification
-import android.graphics.Bitmap
-import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import kotlinx.coroutines.*
@@ -10,7 +8,8 @@ import kotlinx.coroutines.*
 class WhatsAppListener : NotificationListenerService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loop: Job? = null
-    private val packages = setOf("com.whatsapp", "com.whatsapp.w4b")
+    private val waPackages = setOf("com.whatsapp", "com.whatsapp.w4b")
+    private val igPackage = "com.instagram.android"
 
     // Text WhatsApp shows when a message is deleted for everyone (add your language in Settings)
     private val deletedPhrases = listOf(
@@ -27,9 +26,7 @@ class WhatsAppListener : NotificationListenerService() {
     }
 
     override fun onListenerConnected() {
-        ViewOnceWatcher.start(applicationContext)
-        Probe.start(applicationContext)
-        // Background loop: copy new status / voice / view-once files every 30 seconds
+        // Background loop: copy new status / voice files every 30 seconds
         loop?.cancel()
         loop = scope.launch {
             while (isActive) {
@@ -39,57 +36,37 @@ class WhatsAppListener : NotificationListenerService() {
         }
     }
 
-    override fun onListenerDisconnected() {
-        ViewOnceWatcher.stop()
-        Probe.stop()
-        loop?.cancel()
-    }
+    override fun onListenerDisconnected() { loop?.cancel() }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (sbn.packageName !in packages) return
+        val isWa = sbn.packageName in waPackages
+        val isIg = sbn.packageName == igPackage
+        if (!isWa && !isIg) return
+
         val n = sbn.notification
         if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
 
         val extras = n.extras
         val sender = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: return
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: return
+        if (sender == "WhatsApp" || sender == "Instagram") return
+        if (text.matches(Regex("\\d+ new messages.*"))) return
+        // Instagram sometimes bundles "X liked your message" / "X reacted" style lines; skip those
+        if (isIg && Regex("(?i)(liked|reacted to|sent a like)").containsMatchIn(text)) return
 
-        val bmp = firstBitmap(extras)
-        val looksMedia = bmp != null ||
-            text?.contains("photo", true) == true ||
-            text?.contains("video", true) == true ||
-            text?.contains("voice", true) == true
-
-        Probe.log(applicationContext, "NOTIF text=${text?.take(40)} bmp=${bmp != null}")
-
-        if (looksMedia) {
-            Armer.arm()
-            Armer.armWithBitmap(applicationContext, bmp)
-        }
-
-        if (text == null) return
-        if (sender == "WhatsApp" || text.matches(Regex("\\d+ new messages.*"))) return
-
+        val source = if (isIg) "instagram" else "whatsapp"
         val dao = AppDb.get(applicationContext).dao()
         scope.launch {
-            if (isDeletedText(text)) {
+            if (isWa && isDeletedText(text)) {
                 dao.markLatestDeleted(sender)
             } else {
                 val now = System.currentTimeMillis()
                 if (dao.recentDuplicates(sender, text, now - 60_000) == 0) {
-                    dao.insert(SavedMessage(sender = sender, text = text, timestamp = sbn.postTime))
+                    dao.insert(SavedMessage(sender = sender, text = text, timestamp = sbn.postTime, source = source))
                 }
             }
         }
     }
 
-    /** Android 12+ image EXTRA_PICTURE mein nahi, reduced.images mein deta hai. */
-   /** Android 12+ image EXTRA_PICTURE mein nahi, "android.reduced.images" mein deta hai. */
-    private fun firstBitmap(extras: Bundle): Bitmap? {
-        @Suppress("DEPRECATION")
-        (extras.getParcelable(Notification.EXTRA_PICTURE) as? Bitmap)?.let { return it }
-        val arr = extras.getParcelableArray("android.reduced.images")
-        arr?.forEach { p -> if (p is Bitmap) return p }
-        return null
-    }
+    override fun onDestroy() { scope.cancel(); super.onDestroy() }
 }
