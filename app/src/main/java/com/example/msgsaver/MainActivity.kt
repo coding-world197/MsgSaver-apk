@@ -71,7 +71,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(i: Intent?) {
         val raw = i?.getStringExtra(Intent.EXTRA_TEXT) ?: i?.dataString ?: return
-        val hit = Regex("instagram\\.com/(?:reel|reels|p|tv)/[A-Za-z0-9_-]+").find(raw) ?: return
+        val hit = Regex("instagram\\.com/(?:[^/?#]+/)?(?:reel|reels|p|tv)/[A-Za-z0-9_-]+").find(raw) ?: return
         pendingLink.value = "https://www.${hit.value}"
     }
 }
