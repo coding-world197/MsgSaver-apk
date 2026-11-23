@@ -1,20 +1,23 @@
+
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <application
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:label="ChatRewind"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <!-- Main Activity -->
         <activity
             android:name=".MainActivity"
-            android:name=".ReelWebActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
             android:launchMode="singleTop">
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -30,27 +33,48 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="instagram.com" />
-                <data android:scheme="https" android:host="www.instagram.com" />
+                <data
+                    android:scheme="https"
+                    android:host="instagram.com" />
+                <data
+                    android:scheme="https"
+                    android:host="www.instagram.com" />
             </intent-filter>
+
         </activity>
+
+        <!-- Reel Web Activity -->
+        <activity
+            android:name=".ReelWebActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <!-- WhatsApp Notification Listener -->
         <service
             android:name=".WhatsAppListener"
             android:exported="true"
             android:label="ChatRewind"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
+
         </service>
+
+        <!-- File Provider -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
+
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
+
         </provider>
+
     </application>
+
 </manifest>
