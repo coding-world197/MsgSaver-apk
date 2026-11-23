@@ -84,19 +84,12 @@ class WhatsAppListener : NotificationListenerService() {
     }
 
     /** Android 12+ image EXTRA_PICTURE mein nahi, reduced.images mein deta hai. */
+   /** Android 12+ image EXTRA_PICTURE mein nahi, "android.reduced.images" mein deta hai. */
     private fun firstBitmap(extras: Bundle): Bitmap? {
         @Suppress("DEPRECATION")
         (extras.getParcelable(Notification.EXTRA_PICTURE) as? Bitmap)?.let { return it }
-        extras.getParcelableArray(Notification.EXTRA_REDUCED_IMAGES)?.forEach { p ->
-            if (p is Bitmap) return p
-        }
+        val arr = extras.getParcelableArray("android.reduced.images")
+        arr?.forEach { p -> if (p is Bitmap) return p }
         return null
-    }
-
-    override fun onDestroy() {
-        ViewOnceWatcher.stop()
-        Probe.stop()
-        scope.cancel()
-        super.onDestroy()
     }
 }
