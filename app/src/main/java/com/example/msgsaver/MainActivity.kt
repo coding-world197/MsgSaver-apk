@@ -54,10 +54,25 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : ComponentActivity() {
+    private val pendingLink = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
-        setContent { ChatRewindTheme { Root() } }
+        handleIntent(intent)
+        setContent { ChatRewindTheme { Root(pendingLink) } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(i: Intent?) {
+        val raw = i?.getStringExtra(Intent.EXTRA_TEXT) ?: i?.dataString ?: return
+        val hit = Regex("instagram\\.com/(?:reel|reels|p|tv)/[A-Za-z0-9_-]+").find(raw) ?: return
+        pendingLink.value = "https://www.${hit.value}"
     }
 }
 
