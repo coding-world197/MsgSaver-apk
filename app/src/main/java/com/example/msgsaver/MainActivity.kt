@@ -515,6 +515,14 @@ fun ReelsScreen(pendingLink: String? = null, onConsumed: () -> Unit = {}) {
     var error by remember { mutableStateOf<String?>(null) }
     val cs = MaterialTheme.colorScheme
 
+    fun openInApp(url: String) {
+        if (url.isBlank()) {
+            error = "Paste a link first."
+            return
+        }
+        ctx.startActivity(Intent(ctx, ReelWebActivity::class.java).putExtra("url", url.trim()))
+    }
+
     fun start(url: String) {
         if (url.isBlank() || busy) return
         busy = true
@@ -547,7 +555,7 @@ fun ReelsScreen(pendingLink: String? = null, onConsumed: () -> Unit = {}) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Paste a public Reel or post link", fontWeight = FontWeight.Bold, color = cs.onPrimaryContainer)
                     Text(
-                        "Only works for public accounts. Private-account content and Stories can't be fetched this way.",
+                        "Direct download fail ho to “Search in app” dabao — page app ke andar khulega, wahan se download hoga.",
                         fontSize = 12.sp, color = cs.onPrimaryContainer
                     )
                 }
@@ -561,18 +569,32 @@ fun ReelsScreen(pendingLink: String? = null, onConsumed: () -> Unit = {}) {
             )
         }
         item {
-            Button(
-                onClick = {
-                    val url = link.trim()
-                    if (url.isBlank()) error = "Paste a link first." else start(url)
-                },
-                enabled = !busy, modifier = Modifier.fillMaxWidth()
-            ) { Text(if (busy) "Downloading…" else "Download") }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = {
+                        val url = link.trim()
+                        if (url.isBlank()) error = "Paste a link first." else start(url)
+                    },
+                    enabled = !busy, modifier = Modifier.weight(1f)
+                ) { Text(if (busy) "Downloading…" else "Download") }
+
+                OutlinedButton(
+                    onClick = { openInApp(link) },
+                    enabled = !busy, modifier = Modifier.weight(1f)
+                ) { Text("Search in app") }
+            }
         }
         error?.let { msg ->
             item {
                 AppCard(container = cs.errorContainer) {
-                    Text(msg, Modifier.padding(14.dp), color = cs.onErrorContainer, fontSize = 13.sp)
+                    Column(Modifier.padding(14.dp)) {
+                        Text(msg, color = cs.onErrorContainer, fontSize = 13.sp)
+                        Spacer(Modifier.height(10.dp))
+                        FilledTonalButton(onClick = { openInApp(link) }) { Text("Try in-app browser") }
+                    }
                 }
             }
         }
