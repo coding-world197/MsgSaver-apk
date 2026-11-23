@@ -92,7 +92,7 @@ fun allSetupReady(ctx: Context): Boolean =
 /* ------------------------------ ROOT ------------------------------ */
 
 @Composable
-fun Root() {
+fun Root(pendingLink: MutableState<String?>) {
     val ctx = LocalContext.current
     val dao = remember { AppDb.get(ctx).dao() }
     val messages by dao.messages().collectAsState(initial = emptyList())
@@ -114,7 +114,7 @@ fun Root() {
             Prefs.get(ctx).edit().putBoolean("setup_skipped", true).apply()
         })
     } else {
-        MainScaffold(messages, tab) { tab = it }
+        MainScaffold(messages, tab, pendingLink) { tab = it }
     }
 
     update?.let { u ->
@@ -140,7 +140,12 @@ fun Root() {
 }
 
 @Composable
-fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
+fun MainScaffold(
+    messages: List<SavedMessage>,
+    tab: Int,
+    pendingLink: MutableState<String?>,
+    onTab: (Int) -> Unit
+) {
     val tabs = listOf("💬" to "Messages", "🖼" to "Status", "🎤" to "Voice", "🎬" to "Reels", "⚙" to "Settings")
     val deleted = messages.count { it.isDeleted }
     val subtitle = when (tab) {
@@ -150,6 +155,11 @@ fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
         3 -> "Save public Instagram Reels"
         else -> "Setup and options"
     }
+
+    LaunchedEffect(pendingLink.value) {
+        if (pendingLink.value != null) onTab(3)
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = { AppHeader("ChatRewind", subtitle) },
@@ -169,7 +179,7 @@ fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
                 0 -> MessagesScreen(messages)
                 1 -> StatusScreen()
                 2 -> VoiceScreen()
-                3 -> ReelsScreen()
+                3 -> ReelsScreen(pendingLink.value) { pendingLink.value = null }
                 else -> SettingsScreen()
             }
         }
@@ -495,7 +505,7 @@ fun VoiceScreen() {
 /* ------------------------------ REELS ------------------------------ */
 
 @Composable
-fun ReelsScreen() {
+fun ReelsScreen(pendingLink: String? = null, onConsumed: () -> Unit = {}) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val files by AppDb.get(ctx).dao().files("reel").collectAsState(initial = emptyList())
@@ -504,6 +514,29 @@ fun ReelsScreen() {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val cs = MaterialTheme.colorScheme
+
+    fun start(url: String) {
+        if (url.isBlank() || busy) return
+        busy = true
+        error = null
+        scope.launch {
+            when (val r = ReelDownloader.download(ctx, url)) {
+                is ReelResult.Ok -> {
+                    link = ""
+                    Toast.makeText(ctx, "${r.files.size} saved ✅", Toast.LENGTH_SHORT).show()
+                }
+                is ReelResult.Error -> error = r.message
+            }
+            busy = false
+        }
+    }
+
+    LaunchedEffect(pendingLink) {
+        val p = pendingLink ?: return@LaunchedEffect
+        link = p
+        onConsumed()
+        start(p)
+    }
 
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
@@ -531,15 +564,7 @@ fun ReelsScreen() {
             Button(
                 onClick = {
                     val url = link.trim()
-                    if (url.isBlank()) { error = "Paste a link first."; return@Button }
-                    busy = true; error = null
-                    scope.launch {
-                        when (val r = ReelDownloader.download(ctx, url)) {
-                            is ReelResult.Ok -> { link = ""; Toast.makeText(ctx, "Saved ✅", Toast.LENGTH_SHORT).show() }
-                            is ReelResult.Error -> error = r.message
-                        }
-                        busy = false
-                    }
+                    if (url.isBlank()) error = "Paste a link first." else start(url)
                 },
                 enabled = !busy, modifier = Modifier.fillMaxWidth()
             ) { Text(if (busy) "Downloading…" else "Download") }
@@ -570,10 +595,12 @@ fun ReelsScreen() {
                             model = File(f.path), imageLoader = loader, contentDescription = null,
                             contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                         )
-                        Box(
-                            Modifier.size(44.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.5f)),
-                            contentAlignment = Alignment.Center
-                        ) { Text("▶", color = Color.White, fontSize = 18.sp) }
+                        if (f.name.endsWith(".mp4", true)) {
+                            Box(
+                                Modifier.size(44.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.5f)),
+                                contentAlignment = Alignment.Center
+                            ) { Text("▶", color = Color.White, fontSize = 18.sp) }
+                        }
                     }
                     Row(Modifier.padding(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         FilledTonalButton(onClick = {
