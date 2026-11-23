@@ -55,3 +55,7 @@ before deletion stays visible.
 v2.0 (build 11) - New "Reels" tab: paste a public Instagram Reel/post link to download its
 video. Only works for PUBLIC accounts; private accounts and Stories are not accessible this
 way. This depends on Instagram's page structure and may stop working if Instagram changes it.
+
+v2.1 (build 12) - Reels downloader now tries Instagram's "embed" page first, which stays
+static HTML without needing login, instead of the regular post page (which often needs
+JavaScript/login to render and returned nothing). More fallback patterns added too.

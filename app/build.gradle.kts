@@ -17,8 +17,8 @@ android {
         minSdk = 29
         targetSdk = 34
         // IMPORTANT: increase versionCode by 1 for every update you release
-        versionCode = 11
-        versionName = "2.0"
+        versionCode = 12
+        versionName = "2.1"
     }
     signingConfigs {
         if (ksFile != null) {
