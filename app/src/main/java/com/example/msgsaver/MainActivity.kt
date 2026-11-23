@@ -126,12 +126,13 @@ fun Root() {
 
 @Composable
 fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
-    val tabs = listOf("💬" to "Messages", "🖼" to "Status", "🎤" to "Voice", "⚙" to "Settings")
+    val tabs = listOf("💬" to "Messages", "🖼" to "Status", "🎤" to "Voice", "🎬" to "Reels", "⚙" to "Settings")
     val deleted = messages.count { it.isDeleted }
     val subtitle = when (tab) {
         0 -> "${messages.size} saved  •  $deleted deleted"
         1 -> "Keep the statuses you have viewed"
         2 -> "Listen to voice messages again"
+        3 -> "Save public Instagram Reels"
         else -> "Setup and options"
     }
     Scaffold(
@@ -153,6 +154,7 @@ fun MainScaffold(messages: List<SavedMessage>, tab: Int, onTab: (Int) -> Unit) {
                 0 -> MessagesScreen(messages)
                 1 -> StatusScreen()
                 2 -> VoiceScreen()
+                3 -> ReelsScreen()
                 else -> SettingsScreen()
             }
         }
@@ -469,6 +471,106 @@ fun VoiceScreen() {
                         if (isPlaying) VoicePlayer.stop()
                         scope.launch(Dispatchers.IO) { File(f.path).delete(); AppDb.get(ctx).dao().deleteFile(f) }
                     }.padding(8.dp))
+                }
+            }
+        }
+    }
+}
+
+/* ------------------------------ REELS ------------------------------ */
+
+@Composable
+fun ReelsScreen() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val files by AppDb.get(ctx).dao().files("reel").collectAsState(initial = emptyList())
+    val loader = remember { ImageLoader.Builder(ctx).components { add(VideoFrameDecoder.Factory()) }.build() }
+    var link by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val cs = MaterialTheme.colorScheme
+
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            AppCard(container = cs.primaryContainer) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Paste a public Reel or post link", fontWeight = FontWeight.Bold, color = cs.onPrimaryContainer)
+                    Text(
+                        "Only works for public accounts. Private-account content and Stories can't be fetched this way.",
+                        fontSize = 12.sp, color = cs.onPrimaryContainer
+                    )
+                }
+            }
+        }
+        item {
+            OutlinedTextField(
+                value = link, onValueChange = { link = it; error = null }, singleLine = true,
+                placeholder = { Text("https://www.instagram.com/reel/...") },
+                shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
+            )
+        }
+        item {
+            Button(
+                onClick = {
+                    val url = link.trim()
+                    if (url.isBlank()) { error = "Paste a link first."; return@Button }
+                    busy = true; error = null
+                    scope.launch {
+                        when (val r = ReelDownloader.download(ctx, url)) {
+                            is ReelResult.Ok -> { link = ""; Toast.makeText(ctx, "Saved ✅", Toast.LENGTH_SHORT).show() }
+                            is ReelResult.Error -> error = r.message
+                        }
+                        busy = false
+                    }
+                },
+                enabled = !busy, modifier = Modifier.fillMaxWidth()
+            ) { Text(if (busy) "Downloading…" else "Download") }
+        }
+        error?.let { msg ->
+            item {
+                AppCard(container = cs.errorContainer) {
+                    Text(msg, Modifier.padding(14.dp), color = cs.onErrorContainer, fontSize = 13.sp)
+                }
+            }
+        }
+        item { Spacer(Modifier.height(4.dp)) }
+        if (files.isEmpty()) {
+            item {
+                EmptyState("🎬", "No reels saved yet", "Paste a public Reel link above to download it.")
+            }
+        }
+        items(files, key = { it.id }) { f ->
+            AppCard {
+                Column {
+                    Box(
+                        Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable { openFile(ctx, f.path) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = File(f.path), imageLoader = loader, contentDescription = null,
+                            contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
+                        )
+                        Box(
+                            Modifier.size(44.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.5f)),
+                            contentAlignment = Alignment.Center
+                        ) { Text("▶", color = Color.White, fontSize = 18.sp) }
+                    }
+                    Row(Modifier.padding(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FilledTonalButton(onClick = {
+                            scope.launch {
+                                val ok = withContext(Dispatchers.IO) { saveToGallery(ctx, f) }
+                                Toast.makeText(ctx, if (ok) "Saved to gallery" else "Couldn’t save", Toast.LENGTH_SHORT).show()
+                            }
+                        }) { Text("⬇ Save") }
+                        OutlinedButton(onClick = {
+                            scope.launch(Dispatchers.IO) { File(f.path).delete(); AppDb.get(ctx).dao().deleteFile(f) }
+                        }) { Text("Delete") }
+                    }
                 }
             }
         }
