@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
+import com.google.android.gms.ads.MobileAds
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -48,6 +49,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.decode.VideoFrameDecoder
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -55,12 +57,18 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
     private val pendingLink = mutableStateOf<String?>(null)
+    private val adsInitialized = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         handleIntent(intent)
-        setContent { ChatRewindTheme { Root(pendingLink) } }
+        CoroutineScope(Dispatchers.IO).launch {
+            MobileAds.initialize(this@MainActivity) {
+                adsInitialized.value = true
+            }
+        }
+        setContent { ChatRewindTheme { Root(pendingLink, adsInitialized) } }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -92,7 +100,7 @@ fun allSetupReady(ctx: Context): Boolean =
 /* ------------------------------ ROOT ------------------------------ */
 
 @Composable
-fun Root(pendingLink: MutableState<String?>) {
+fun Root(pendingLink: MutableState<String?>, adsInitialized: State<Boolean>) {
     val ctx = LocalContext.current
     val dao = remember { AppDb.get(ctx).dao() }
     val messages by dao.messages().collectAsState(initial = emptyList())
@@ -114,7 +122,7 @@ fun Root(pendingLink: MutableState<String?>) {
             Prefs.get(ctx).edit().putBoolean("setup_skipped", true).apply()
         })
     } else {
-        MainScaffold(messages, tab, pendingLink) { tab = it }
+        MainScaffold(messages, tab, pendingLink, adsInitialized.value) { tab = it }
     }
 
     update?.let { u ->
@@ -144,6 +152,7 @@ fun MainScaffold(
     messages: List<SavedMessage>,
     tab: Int,
     pendingLink: MutableState<String?>,
+    adsInitialized: Boolean,
     onTab: (Int) -> Unit
 ) {
     val tabs = listOf("💬" to "Messages", "🖼" to "Status", "🎤" to "Voice", "🎬" to "Reels", "⚙" to "Settings")
@@ -164,12 +173,17 @@ fun MainScaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = { AppHeader("ChatRewind", subtitle) },
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                tabs.forEachIndexed { i, (emoji, label) ->
-                    NavigationBarItem(
-                        selected = tab == i, onClick = { onTab(i) },
-                        icon = { Text(emoji, fontSize = 20.sp) }, label = { Text(label) }
-                    )
+            Column {
+                // AdMob banner appears above the existing navigation bar.
+                BannerAd(enabled = adsInitialized)
+
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                    tabs.forEachIndexed { i, (emoji, label) ->
+                        NavigationBarItem(
+                            selected = tab == i, onClick = { onTab(i) },
+                            icon = { Text(emoji, fontSize = 20.sp) }, label = { Text(label) }
+                        )
+                    }
                 }
             }
         }
