@@ -10,6 +10,9 @@
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity
             android:name=".MainActivity"
+            android:name=".ReelWebActivity"
+    android:exported="false"
+    android:configChanges="orientation|screenSize|keyboardHidden" />
             android:exported="true"
             android:launchMode="singleTop">
             <intent-filter>
