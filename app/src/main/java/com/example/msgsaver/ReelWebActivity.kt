@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
+import android.util.Log
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
@@ -30,8 +32,9 @@ import java.util.UUID
 import java.util.concurrent.CopyOnWriteArraySet
 
 /**
- * In-app browser. Desktop UA par Instagram asli <video src=".mp4"> deta hai,
- * player ko force play karke wahi URL pakda jata hai.
+ * In-app browser. Desktop UA par Instagram asli <video src=".mp4"> deta hai.
+ * Player ko force play karke mp4 request pakdi jati hai; blob: player ho to
+ * blob ke bytes page ke andar hi base64 me nikaal liye jaate hain.
  */
 class ReelWebActivity : Activity() {
 
@@ -43,6 +46,9 @@ class ReelWebActivity : Activity() {
     private val images = CopyOnWriteArraySet<String>()
     private val ui = Handler(Looper.getMainLooper())
     private var ticks = 0
+    private var hasBlob = false
+    private var blobB64: String? = null
+    private var blobErr: String? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(b: Bundle?) {
@@ -87,15 +93,19 @@ class ReelWebActivity : Activity() {
             useWideViewPort = true
             loadWithOverviewMode = true
             cacheMode = WebSettings.LOAD_DEFAULT
-            // Desktop UA — mobile layout par player JS ke peeche chhupa rehta hai
             userAgentString =
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         }
 
         web.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
+                // intent:// se Instagram app par bounce rok do
+                return r.url.toString().startsWith("intent:")
+            }
+
             override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
                 val u = r.url.toString()
-                if (u.contains(".mp4") || u.contains("/v/t2/")) addVideo(u)
+                if (isVideoUrl(u)) addVideo(u)
                 return null
             }
 
@@ -109,12 +119,19 @@ class ReelWebActivity : Activity() {
         web.loadUrl(url)
     }
 
-    /** Har 1s par player ko kick + probe, 12 tak. */
+    private fun isVideoUrl(u: String) =
+        u.contains(".mp4") || u.contains(".m4v") || u.contains(".webm") || u.contains("/v/t2/")
+
+    /** Har 1s: player kick + probe + blob poll. 15 tick tak. */
     private fun kick() {
-        if (ticks > 12) return
+        if (ticks > 15) return
         ticks++
         web.evaluateJavascript(KICK_JS) { }
         probe()
+        if (hasBlob && videos.isEmpty() && blobB64 == null && blobErr == null) {
+            web.evaluateJavascript(GRAB_JS) { }
+        }
+        pollBlob()
         ui.postDelayed({ kick() }, 1000)
     }
 
@@ -128,33 +145,62 @@ class ReelWebActivity : Activity() {
     }
 
     private fun parseProbe(result: String?) {
-        if (result.isNullOrBlank() || result == "null") return
+        val raw = unquote(result) ?: return
         try {
-            val unquoted =
-                if (result.startsWith("\"") && result.endsWith("\""))
-                    JSONTokener(result).nextValue() as String
-                else result
-            val arr = JSONArray(unquoted)
+            val arr = JSONArray(raw)
             for (i in 0 until arr.length()) {
                 val u = arr.optString(i)
-                if (u.isEmpty() || u.startsWith("blob:")) continue
-                if (u.contains(".mp4")) videos.add(u) else images.add(u)
+                if (u.isEmpty()) continue
+                when {
+                    u.startsWith("blob:") -> hasBlob = true
+                    u.startsWith("data:") -> if (blobB64 == null) blobB64 = u
+                    isVideoUrl(u) -> videos.add(u)
+                    else -> images.add(u)
+                }
             }
             refresh()
         } catch (e: Exception) { }
     }
 
+    private fun pollBlob() {
+        if (blobB64 != null) return
+        web.evaluateJavascript("window.__reelB64 || window.__reelErr || ''") { r ->
+            val s = unquote(r) ?: return@evaluateJavascript
+            when {
+                s.startsWith("data:") -> { blobB64 = s; refresh() }
+                s.isNotEmpty() -> {
+                    blobErr = s
+                    Log.d("REEL", "blob: $s")
+                    refresh()
+                }
+            }
+        }
+    }
+
+    private fun unquote(raw: String?): String? {
+        if (raw.isNullOrBlank() || raw == "null") return null
+        return try {
+            if (raw.startsWith("\"")) JSONTokener(raw).nextValue() as String else raw
+        } catch (e: Exception) { null }
+    }
+
     private fun refresh() {
-        dl.isEnabled = videos.isNotEmpty()
+        val hasVideo = videos.isNotEmpty() || blobB64 != null
+        dl.isEnabled = hasVideo
         status.text = when {
             videos.isNotEmpty() -> "${videos.size} video mila. Download dabao."
+            blobB64 != null -> "Video mil gaya. Download dabao."
+            blobErr != null -> "Video block ho gaya ($blobErr). Player par tap karo."
+            hasBlob -> "Video load ho raha hai..."
             images.isNotEmpty() -> "Poster mila, video load ho raha hai..."
             else -> "Video dhoondh rahe hain..."
         }
     }
 
     private fun save() {
-        // Sirf videos; video na ho to carousel photos
+        if (videos.isEmpty() && blobB64 != null) { saveBlob(); return }
+
+        // Video ho to sirf video. Video na ho to carousel photos.
         val list = if (videos.isNotEmpty()) {
             videos.map { it to true }
         } else {
@@ -189,15 +235,49 @@ class ReelWebActivity : Activity() {
                 ok++
             }
 
-            ui.post {
-                Toast.makeText(this@ReelWebActivity, "$ok saved", Toast.LENGTH_SHORT).show()
-                if (ok > 0) {
-                    setResult(Activity.RESULT_OK, Intent())
-                    finish()
-                } else {
-                    dl.isEnabled = videos.isNotEmpty()
-                    status.text = "Download fail. Player par tap karke dobara try karo."
+            done(ok)
+        }
+    }
+
+    private fun saveBlob() {
+        val data = blobB64 ?: return
+        dl.isEnabled = false
+        status.text = "Downloading..."
+
+        CoroutineScope(Dispatchers.IO).launch {
+            var ok = 0
+            try {
+                val bytes = Base64.decode(data.substringAfter("base64,", ""), Base64.DEFAULT)
+                if (bytes.isNotEmpty()) {
+                    val dir = File(filesDir, "backup/reel").apply { mkdirs() }
+                    val name = "ig_${UUID.randomUUID().toString().take(8)}.mp4"
+                    val out = File(dir, name)
+                    out.writeBytes(bytes)
+                    AppDb.get(this@ReelWebActivity).dao().insertFile(
+                        BackupFile(
+                            category = "reel", name = name, path = out.absolutePath,
+                            origModified = System.currentTimeMillis(), savedAt = System.currentTimeMillis(),
+                            size = out.length(), isBiz = false
+                        )
+                    )
+                    ok = 1
                 }
+            } catch (e: Exception) {
+                Log.d("REEL", "blob decode fail ${e.message}")
+            }
+            done(ok)
+        }
+    }
+
+    private fun done(ok: Int) {
+        ui.post {
+            Toast.makeText(this@ReelWebActivity, "$ok saved", Toast.LENGTH_SHORT).show()
+            if (ok > 0) {
+                setResult(Activity.RESULT_OK, Intent())
+                finish()
+            } else {
+                refresh()
+                status.text = "Download fail. Player par tap karke dobara try karo."
             }
         }
     }
@@ -216,13 +296,15 @@ class ReelWebActivity : Activity() {
         c.setRequestProperty("Range", "bytes=0-")
         if (cookie.isNotEmpty()) c.setRequestProperty("Cookie", cookie)
         val st = c.responseCode
-        if (st !in 200..299) { android.util.Log.d("REEL", "pull HTTP $st"); false }
-        else {
+        if (st !in 200..299) {
+            Log.d("REEL", "pull HTTP $st")
+            false
+        } else {
             c.inputStream.use { i -> out.outputStream().use { o -> i.copyTo(o, 64 * 1024) } }
             true
         }
     } catch (e: Exception) {
-        android.util.Log.d("REEL", "pull fail ${e.message}")
+        Log.d("REEL", "pull fail ${e.message}")
         false
     }
 
@@ -237,7 +319,7 @@ class ReelWebActivity : Activity() {
     }
 
     companion object {
-        /** Player force play: overlay hatao, video unmute+play, poster par tap. */
+        /** Player force play: overlay hatao, video play, poster par tap. */
         private const val KICK_JS = """
             (function(){
               document.querySelectorAll('[aria-label="Close"],[aria-label="Close modal"]').forEach(function(b){ b.click(); });
@@ -262,6 +344,32 @@ class ReelWebActivity : Activity() {
               var im = document.querySelector('meta[property="og:image"]');
               if (im && im.content) out.push(im.content);
               return JSON.stringify(out);
+            })()
+        """
+
+        /** blob: player ho to bytes page ke andar hi base64 me nikaal lo. */
+        private const val GRAB_JS = """
+            (function(){
+              if (window.__reelB64 || window.__reelBusy) return;
+              var v = document.querySelector('video');
+              var src = v ? (v.currentSrc || v.src || '') : '';
+              if (!src || src.indexOf('blob:') !== 0) return;
+              window.__reelBusy = 1;
+              var x = new XMLHttpRequest();
+              x.open('GET', src, true);
+              x.responseType = 'blob';
+              x.onload = function(){
+                if (x.status !== 200 && x.status !== 0) { window.__reelErr = 'xhr' + x.status; window.__reelBusy = 0; return; }
+                var b = x.response;
+                if (!b || b.size === 0) { window.__reelErr = 'empty'; window.__reelBusy = 0; return; }
+                if (b.size > 30000000) { window.__reelErr = 'big'; window.__reelBusy = 0; return; }
+                var fr = new FileReader();
+                fr.onload = function(){ window.__reelB64 = fr.result; window.__reelBusy = 0; };
+                fr.onerror = function(){ window.__reelErr = 'read'; window.__reelBusy = 0; };
+                fr.readAsDataURL(b);
+              };
+              x.onerror = function(){ window.__reelErr = 'net'; window.__reelBusy = 0; };
+              x.send();
             })()
         """
     }
