@@ -2,6 +2,7 @@ package com.example.msgsaver
 
 import android.content.Context
 import android.util.Log
+import android.webkit.CookieManager as WebCookies
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -23,11 +24,11 @@ sealed class ReelResult {
 /**
  * Public Instagram Reel/Post ka media laata hai. Sirf PUBLIC accounts.
  *
- * Route 1: api/v1/media/{id}/info/    -> JSON  (i.instagram.com pehle)
- * Route 2: /p/{code}/embed/captioned/ -> HTML scrape (retry ke saath)
+ * Route 1: api/v1/media/{id}/info/    -> JSON
+ * Route 2: /p/{code}/embed/captioned/ -> HTML scrape
  *
- * 401/403 se bachne ke liye pehle homepage se cookies li jati hain.
- * Dono fail hone par bhi "private account" nahi kaha jata.
+ * 401/403 se bachne ke liye pehle homepage se cookies li jati hain,
+ * aur CDN download par WebView ki cookies bhi bheji jati hain.
  */
 object ReelDownloader {
 
@@ -67,7 +68,16 @@ object ReelDownloader {
         data class Fail(val status: Int, val login: Boolean) : Route()
     }
 
-    private fun clean(s: String) = s.replace("\\u0026", "&").replace("\\/", "/")
+    private fun clean(s: String) = s
+        .replace("\\u0026", "&")
+        .replace("&amp;", "&")
+        .replace("\\/", "/")
+        .replace("\\u003d", "=")
+
+    /** WebView me user login kar chuka ho to wahi cookies CDN par bhejo. */
+    private fun sessionCookie(): String = try {
+        WebCookies.getInstance().getCookie("https://www.instagram.com/").orEmpty()
+    } catch (e: Exception) { "" }
 
     /** Ek baar homepage se cookies (csrftoken/mid) le lo — 401/403 ka bada sabab missing cookies hain. */
     private fun ensureCookies() {
@@ -142,8 +152,8 @@ object ReelDownloader {
         ensureCookies()
 
         val failures = mutableListOf<Route.Fail>()
-
         var found: List<Media>? = null
+
         when (val r = apiRoute(code)) {
             is Route.Ok -> found = r.media
             is Route.Fail -> failures += r
@@ -180,14 +190,14 @@ object ReelDownloader {
 
         if (saved.isEmpty()) {
             ReelResult.Error(
-                "Media URL mile par download fail hua ($failed/${list.size}). Network ya Instagram CDN block."
+                "Media URL mile par download fail hua ($failed/${list.size}). “Search in app” se try karo."
             )
         } else {
             ReelResult.Ok(saved)
         }
     }
 
-    /** Failures se sahi message chunta hai - private sirf tab jab login redirect mile. */
+    /** Failures se sahi message chunta hai — private sirf tab jab login redirect mile. */
     private fun reasonFor(failures: List<Route.Fail>): String {
         val codes = failures.map { it.status }
         return when {
@@ -225,8 +235,8 @@ object ReelDownloader {
 
             val out = LinkedHashSet<Media>()
 
-            fun addVideos(o: JSONObject) {
-                val arr = o.optJSONArray("video_versions") ?: return
+            fun bestOf(arr: org.json.JSONArray?): String? {
+                arr ?: return null
                 var best: String? = null
                 var bestArea = -1L
                 for (i in 0 until arr.length()) {
@@ -236,34 +246,22 @@ object ReelDownloader {
                     val area = v.optInt("width").toLong() * v.optInt("height").toLong()
                     if (area > bestArea) { bestArea = area; best = u }
                 }
-                best?.let { out += Media(it, true) }
-            }
-
-            // Sabse bada resolution chuno, thumbnail nahi
-            fun addImage(o: JSONObject) {
-                val arr = o.optJSONArray("image_versions2") ?: return
-                var best: String? = null
-                var bestArea = -1L
-                for (i in 0 until arr.length()) {
-                    val v = arr.getJSONObject(i)
-                    val u = v.optString("url")
-                    if (u.isEmpty()) continue
-                    val area = v.optInt("width").toLong() * v.optInt("height").toLong()
-                    if (area > bestArea) { bestArea = area; best = u }
-                }
-                best?.let { out += Media(it, false) }
+                return best
             }
 
             val item = items.getJSONObject(0)
-            addVideos(item)
+            bestOf(item.optJSONArray("video_versions"))?.let { out += Media(it, true) }
+
             item.optJSONArray("carousel_media")?.let { arr ->
                 for (i in 0 until arr.length()) {
                     val m = arr.getJSONObject(i)
-                    addVideos(m)
-                    addImage(m)
+                    bestOf(m.optJSONArray("video_versions"))?.let { out += Media(it, true) }
+                    bestOf(m.optJSONArray("image_versions2"))?.let { out += Media(it, false) }
                 }
             }
-            if (out.isEmpty()) addImage(item)
+            if (out.isEmpty()) {
+                bestOf(item.optJSONArray("image_versions2"))?.let { out += Media(it, false) }
+            }
 
             if (out.isEmpty()) null
             else out.distinctBy { it.url.substringBefore('?') }.take(20).toList()
@@ -293,7 +291,7 @@ object ReelDownloader {
                 if (parsed != null) return Route.Ok(parsed)
                 lastStatus = status
             }
-            if (attempt == 0) ensureCookies()
+            if (attempt == 0) { warmed = false; ensureCookies() }
         }
         return Route.Fail(lastStatus, sawLogin)
     }
@@ -305,7 +303,6 @@ object ReelDownloader {
             p.findAll(html).forEach { out += Media(clean(it.groupValues[1]), true) }
         }
 
-        // srcset se sabse bada size, warna display_url
         val bigImages = LinkedHashSet<String>()
         SRCSET.findAll(html).forEach { m ->
             val best = m.groupValues[1].split(',').mapNotNull { part ->
@@ -353,21 +350,33 @@ object ReelDownloader {
         }
     }
 
+    /** Desktop UA fail ho to app UA se dobara. */
+    private fun saveMedia(url: String, dir: File, isVideo: Boolean): File? {
+        for (ua in listOf(UA, APP_UA)) {
+            val f = saveMediaOnce(url, dir, isVideo, ua)
+            if (f != null) return f
+        }
+        return null
+    }
+
     /**
-     * Media file laata hai. Validation ke bagair kuch save nahi hota:
+     * Validation ke bagair kuch save nahi hota:
      * status -> Content-Type -> HTML reject -> poora stream -> Content-Length -> file signature.
      */
-    private fun saveMedia(url: String, dir: File, isVideo: Boolean): File? {
+    private fun saveMediaOnce(url: String, dir: File, isVideo: Boolean, ua: String): File? {
         var c: HttpURLConnection? = null
         val tmp = File(dir, "tmp_${UUID.randomUUID().toString().take(8)}")
         try {
             c = URL(url).openConnection() as HttpURLConnection
             c.connectTimeout = 15_000
-            c.readTimeout = 60_000
+            c.readTimeout = 90_000
             c.instanceFollowRedirects = true
-            c.setRequestProperty("User-Agent", UA)
+            c.setRequestProperty("User-Agent", ua)
             c.setRequestProperty("Referer", "https://www.instagram.com/")
             c.setRequestProperty("Accept", "image/webp,image/*,video/*,*/*;q=0.8")
+            c.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+            c.setRequestProperty("X-IG-App-ID", IG_APP_ID)
+            sessionCookie().takeIf { it.isNotEmpty() }?.let { c.setRequestProperty("Cookie", it) }
 
             val status = c.responseCode
             if (status !in 200..299) {
@@ -407,8 +416,8 @@ object ReelDownloader {
             }
 
             val head = ByteArray(16)
-            FileInputStream(tmp).use { it.read(head) }
-            val ext = signatureExt(head) ?: run { tmp.delete(); Log.d(TAG, "bin unknown sig"); return null }
+            val headLen = FileInputStream(tmp).use { it.read(head) }
+            val ext = signatureExt(head, headLen) ?: run { tmp.delete(); Log.d(TAG, "bin unknown sig"); return null }
 
             val typeOk = if (isVideo) ext in setOf("mp4", "webm") else ext in setOf("jpg", "png", "webp")
             if (!typeOk) { tmp.delete(); Log.d(TAG, "bin type mismatch $ext"); return null }
@@ -429,12 +438,12 @@ object ReelDownloader {
         }
     }
 
-    private fun signatureExt(head: ByteArray): String? {
-        fun at(i: Int) = if (i < head.size) head[i].toInt() and 0xFF else -1
+    private fun signatureExt(head: ByteArray, len: Int): String? {
+        fun at(i: Int) = if (i < len) head[i].toInt() and 0xFF else -1
         if (at(0) == 0xFF && at(1) == 0xD8 && at(2) == 0xFF) return "jpg"
         if (at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E && at(3) == 0x47) return "png"
-        if (head.size >= 12 && String(head, 4, 4, Charsets.US_ASCII) == "ftyp") return "mp4"
-        if (head.size >= 4 && String(head, 0, 4, Charsets.US_ASCII) == "RIFF") return "webp"
+        if (len >= 8 && String(head, 4, 4, Charsets.US_ASCII) == "ftyp") return "mp4"
+        if (len >= 12 && String(head, 0, 4, Charsets.US_ASCII) == "RIFF") return "webp"
         if (at(0) == 0x1A && at(1) == 0x45) return "webm"
         return null
     }
