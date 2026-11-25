@@ -547,7 +547,10 @@ fun ReelsScreen(pendingLink: String? = null, onConsumed: () -> Unit = {}) {
                     link = ""
                     Toast.makeText(ctx, "${r.files.size} saved ✅", Toast.LENGTH_SHORT).show()
                 }
-                is ReelResult.Error -> error = r.message
+                is ReelResult.Error -> {
+                    error = r.message
+                    if (r.message.contains("download fail")) openInApp(url)
+                }
             }
             busy = false
         }
