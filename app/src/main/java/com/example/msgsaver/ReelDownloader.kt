@@ -176,7 +176,16 @@ object ReelDownloader {
         val saved = mutableListOf<BackupFile>()
         var failed = 0
 
-        for (m in list) {
+        // Video pehle. Ek video + ek image = reel ka poster, duplicate mat banao.
+        val ordered = list.sortedByDescending { it.isVideo }
+        val posterOnly = ordered.count { it.isVideo } == 1 && ordered.count { !it.isVideo } == 1
+
+        for (m in ordered) {
+            Log.d(TAG, "dl video=${m.isVideo} ${m.url.take(90)}")
+            if (posterOnly && !m.isVideo && saved.any { it.name.endsWith(".mp4") }) {
+                Log.d(TAG, "poster skip (video saved)")
+                continue
+            }
             val file = saveMedia(m.url, dir, m.isVideo)
             if (file == null) { failed++; continue }
             val bf = BackupFile(
@@ -187,6 +196,8 @@ object ReelDownloader {
             dao.insertFile(bf)
             saved += bf
         }
+
+        Probe.log(ctx, "reel ok $code saved=${saved.size} failed=$failed of=${list.size}")
 
         if (saved.isEmpty()) {
             ReelResult.Error(
@@ -250,6 +261,8 @@ object ReelDownloader {
             }
 
             val item = items.getJSONObject(0)
+            Log.d(TAG, "api keys=${item.keys().asSequence().joinToString(",").take(240)}")
+
             bestOf(item.optJSONArray("video_versions"))?.let { out += Media(it, true) }
 
             item.optJSONArray("carousel_media")?.let { arr ->
@@ -262,6 +275,8 @@ object ReelDownloader {
             if (out.isEmpty()) {
                 bestOf(item.optJSONArray("image_versions2"))?.let { out += Media(it, false) }
             }
+
+            Log.d(TAG, "api parsed v=${out.count { it.isVideo }} i=${out.count { !it.isVideo }}")
 
             if (out.isEmpty()) null
             else out.distinctBy { it.url.substringBefore('?') }.take(20).toList()
@@ -288,6 +303,7 @@ object ReelDownloader {
                 if (login) { sawLogin = true; continue }
 
                 val parsed = parseEmbed(body)
+                Log.d(TAG, "embed $path parsed v=${parsed?.count { it.isVideo }} i=${parsed?.count { !it.isVideo }}")
                 if (parsed != null) return Route.Ok(parsed)
                 lastStatus = status
             }
@@ -373,18 +389,21 @@ object ReelDownloader {
             c.instanceFollowRedirects = true
             c.setRequestProperty("User-Agent", ua)
             c.setRequestProperty("Referer", "https://www.instagram.com/")
-            c.setRequestProperty("Accept", "image/webp,image/*,video/*,*/*;q=0.8")
+            c.setRequestProperty(
+                "Accept",
+                if (isVideo) "video/mp4,video/*;q=0.9,*/*;q=0.8" else "image/webp,image/*,*/*;q=0.8"
+            )
             c.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
             c.setRequestProperty("X-IG-App-ID", IG_APP_ID)
+            c.setRequestProperty("Range", "bytes=0-")
             sessionCookie().takeIf { it.isNotEmpty() }?.let { c.setRequestProperty("Cookie", it) }
 
             val status = c.responseCode
-            if (status !in 200..299) {
-                Log.d(TAG, "bin HTTP $status")
-                return null
-            }
+            Log.d(TAG, "bin $status $ua ${url.take(80)}")
+            if (status !in 200..299) return null
 
             val ctype = c.contentType?.lowercase().orEmpty()
+            Log.d(TAG, "bin type=$ctype len=${c.contentLengthLong}")
             if (ctype.startsWith("text/")) {
                 Log.d(TAG, "bin HTML instead of media ($ctype)")
                 return null
