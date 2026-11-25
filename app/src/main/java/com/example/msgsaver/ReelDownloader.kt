@@ -119,39 +119,70 @@ object ReelDownloader {
     /** InterAPI may return several quality variants for the same carousel slide.
      * Keep the largest resolution for each media URL path, preserving slide order.
      */
-    private fun parseMedia(body: String): List<Media> = try {
+    
+private fun parseMedia(body: String): List<Media> {
+    return try {
         val json = JSONObject(body)
-        if (json.optString("status").equals("error", ignoreCase = true)) return emptyList()
-        val array = json.optJSONArray("media") ?: return emptyList()
-        val bestBySlide = LinkedHashMap<String, Media>()
-        for (i in 0 until array.length()) {
-            val item = array.optJSONObject(i) ?: continue
-            val rawUrl = item.optString("url").takeIf { it.startsWith("https://") }
-                ?: item.optString("download_url").takeIf { it.startsWith("https://") }
-                ?: continue
-            val type = item.optString("type").lowercase()
-            val isVideo = type == "video"
-            if (!isVideo && type != "photo" && type != "image") continue
-            val quality = item.optString("quality")
-            val match = Regex("(\\d+)\\s*x\\s*(\\d+)", RegexOption.IGNORE_CASE).find(quality)
-            val area = if (match != null) {
-                match.groupValues[1].toLongOrNull().orZero() * match.groupValues[2].toLongOrNull().orZero()
-            } else {
-                Regex("(\\d{3,4})p").find(quality)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+
+        if (json.optString("status").equals("error", ignoreCase = true)) {
+            emptyList()
+        } else {
+            val array = json.optJSONArray("media") ?: return emptyList()
+            val bestBySlide = LinkedHashMap<String, Media>()
+
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+
+                val rawUrl = item.optString("url")
+                    .takeIf { it.startsWith("https://") }
+                    ?: item.optString("download_url")
+                        .takeIf { it.startsWith("https://") }
+                    ?: continue
+
+                val type = item.optString("type").lowercase()
+                val isVideo = type == "video"
+
+                if (!isVideo && type != "photo" && type != "image") continue
+
+                val quality = item.optString("quality")
+                val match = Regex(
+                    "(\\d+)\\s*x\\s*(\\d+)",
+                    RegexOption.IGNORE_CASE
+                ).find(quality)
+
+                val area = if (match != null) {
+                    match.groupValues[1].toLongOrNull().orZero() *
+                        match.groupValues[2].toLongOrNull().orZero()
+                } else {
+                    Regex("(\\d{3,4})p")
+                        .find(quality)
+                        ?.groupValues?.get(1)
+                        ?.toLongOrNull() ?: 0L
+                }
+
+                val pathKey = try {
+                    URL(rawUrl).path
+                } catch (_: Exception) {
+                    rawUrl.substringBefore('?')
+                }
+
+                val key = "$type:$pathKey"
+                val candidate = Media(rawUrl, isVideo, area)
+                val previous = bestBySlide[key]
+
+                if (previous == null || candidate.qualityArea > previous.qualityArea) {
+                    bestBySlide[key] = candidate
+                }
             }
-            val pathKey = try { URL(rawUrl).path } catch (_: Exception) { rawUrl.substringBefore('?') }
-            val key = "$type:$pathKey"
-            val candidate = Media(rawUrl, isVideo, area)
-            val previous = bestBySlide[key]
-            if (previous == null || candidate.qualityArea > previous.qualityArea) bestBySlide[key] = candidate
+
+            bestBySlide.values.toList()
         }
-        bestBySlide.values.toList()
     } catch (e: Exception) {
         Log.e(TAG, "InterAPI response parse failed", e)
         emptyList()
     }
+}
 
-    private fun Long?.orZero(): Long = this ?: 0L
 
     private fun apiError(status: Int, body: String?): String {
         val detail = try { JSONObject(body.orEmpty()).optString("message") } catch (_: Exception) { "" }
