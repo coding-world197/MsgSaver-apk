@@ -113,19 +113,20 @@ object ReelDownloader {
 
         val failures = mutableListOf<Route.Fail>()
 
-        var media: List<Media>? = null
+        var found: List<Media>? = null
         when (val r = apiRoute(code)) {
-            is Route.Ok -> media = r.media
+            is Route.Ok -> found = r.media
             is Route.Fail -> failures += r
         }
-        if (media == null) {
+        if (found == null) {
             when (val r = embedRoute(code)) {
-                is Route.Ok -> media = r.media
+                is Route.Ok -> found = r.media
                 is Route.Fail -> failures += r
             }
         }
 
-        if (media.isNullOrEmpty()) {
+        val list = found
+        if (list.isNullOrEmpty()) {
             Probe.log(ctx, "reel fail $code: " + failures.joinToString { "s=${it.status} login=${it.login}" })
             return@withContext ReelResult.Error(reasonFor(failures))
         }
@@ -135,8 +136,9 @@ object ReelDownloader {
         val saved = mutableListOf<BackupFile>()
         var failed = 0
 
-        for (m in media) {
-            val file = saveMedia(m.url, dir, m.isVideo) ?: run { failed++; null } ?: continue
+        for (m in list) {
+            val file = saveMedia(m.url, dir, m.isVideo)
+            if (file == null) { failed++; continue }
             val bf = BackupFile(
                 category = "reel", name = file.name, path = file.absolutePath,
                 origModified = System.currentTimeMillis(), savedAt = System.currentTimeMillis(),
@@ -146,12 +148,12 @@ object ReelDownloader {
             saved += bf
         }
 
-        when {
-            saved.isEmpty() -> ReelResult.Error(
-                "Media URL mile par download fail hua ($failed/${media.size}). Network ya Instagram CDN block."
+        if (saved.isEmpty()) {
+            ReelResult.Error(
+                "Media URL mile par download fail hua ($failed/${list.size}). Network ya Instagram CDN block."
             )
-            failed > 0 -> ReelResult.Ok(saved) // partial carousel bhi kaam ka hai
-            else -> ReelResult.Ok(saved)
+        } else {
+            ReelResult.Ok(saved)
         }
     }
 
@@ -185,57 +187,59 @@ object ReelDownloader {
         return Route.Fail(lastStatus, false)
     }
 
-    private fun parseApi(body: String): List<Media>? = try {
-        val items = JSONObject(body).optJSONArray("items") ?: return null
-        if (items.length() == 0) return null
+    private fun parseApi(body: String): List<Media>? {
+        return try {
+            val items = JSONObject(body).optJSONArray("items") ?: return null
+            if (items.length() == 0) return null
 
-        val out = LinkedHashSet<Media>()
+            val out = LinkedHashSet<Media>()
 
-        fun addVideos(o: JSONObject) {
-            val arr = o.optJSONArray("video_versions") ?: return
-            var best: String? = null
-            var bestArea = -1L
-            for (i in 0 until arr.length()) {
-                val v = arr.getJSONObject(i)
-                val u = v.optString("url")
-                if (u.isEmpty()) continue
-                val area = v.optInt("width").toLong() * v.optInt("height").toLong()
-                if (area > bestArea) { bestArea = area; best = u }
+            fun addVideos(o: JSONObject) {
+                val arr = o.optJSONArray("video_versions") ?: return
+                var best: String? = null
+                var bestArea = -1L
+                for (i in 0 until arr.length()) {
+                    val v = arr.getJSONObject(i)
+                    val u = v.optString("url")
+                    if (u.isEmpty()) continue
+                    val area = v.optInt("width").toLong() * v.optInt("height").toLong()
+                    if (area > bestArea) { bestArea = area; best = u }
+                }
+                best?.let { out += Media(it, true) }
             }
-            best?.let { out += Media(it, true) }
-        }
 
-        // Sabse bada resolution chuno, thumbnail nahi
-        fun addImage(o: JSONObject) {
-            val arr = o.optJSONArray("image_versions2") ?: return
-            var best: String? = null
-            var bestArea = -1L
-            for (i in 0 until arr.length()) {
-                val v = arr.getJSONObject(i)
-                val u = v.optString("url")
-                if (u.isEmpty()) continue
-                val area = v.optInt("width").toLong() * v.optInt("height").toLong()
-                if (area > bestArea) { bestArea = area; best = u }
+            // Sabse bada resolution chuno, thumbnail nahi
+            fun addImage(o: JSONObject) {
+                val arr = o.optJSONArray("image_versions2") ?: return
+                var best: String? = null
+                var bestArea = -1L
+                for (i in 0 until arr.length()) {
+                    val v = arr.getJSONObject(i)
+                    val u = v.optString("url")
+                    if (u.isEmpty()) continue
+                    val area = v.optInt("width").toLong() * v.optInt("height").toLong()
+                    if (area > bestArea) { bestArea = area; best = u }
+                }
+                best?.let { out += Media(it, false) }
             }
-            best?.let { out += Media(it, false) }
-        }
 
-        val item = items.getJSONObject(0)
-        addVideos(item)
-        item.optJSONArray("carousel_media")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                val m = arr.getJSONObject(i)
-                addVideos(m)
-                addImage(m)
+            val item = items.getJSONObject(0)
+            addVideos(item)
+            item.optJSONArray("carousel_media")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val m = arr.getJSONObject(i)
+                    addVideos(m)
+                    addImage(m)
+                }
             }
-        }
-        if (out.isEmpty()) addImage(item)
+            if (out.isEmpty()) addImage(item)
 
-        if (out.isEmpty()) null
-        else out.distinctBy { it.url.substringBefore('?') }.take(20).toList()
-    } catch (e: Exception) {
-        Log.d(TAG, "api parse fail: ${e.message}")
-        null
+            if (out.isEmpty()) null
+            else out.distinctBy { it.url.substringBefore('?') }.take(20).toList()
+        } catch (e: Exception) {
+            Log.d(TAG, "api parse fail: ${e.message}")
+            null
+        }
     }
 
     /* --------------------------- ROUTE 2: EMBED --------------------------- */
