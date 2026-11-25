@@ -1,20 +1,15 @@
-
 package com.example.msgsaver
 
 import android.content.Context
 import android.util.Log
-import android.webkit.CookieManager as WebCookies
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
-import java.math.BigInteger
-import java.net.CookieHandler
-import java.net.CookieManager
-import java.net.CookiePolicy
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.util.UUID
 
 sealed class ReelResult {
@@ -22,802 +17,217 @@ sealed class ReelResult {
     data class Error(val message: String) : ReelResult()
 }
 
+/** Instagram-only downloader powered by InterAPI. No app-owned backend is required. */
 object ReelDownloader {
-
     private const val TAG = "REEL"
+    private const val API_ENDPOINT = "https://api.interapi.dev/api/v1/instagram"
+    private const val UA = "MsgSaver/4.2 (Android)"
 
-    private const val UA =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    private data class Media(val url: String, val isVideo: Boolean, val qualityArea: Long)
 
-    private const val APP_UA =
-        "Instagram 269.0.0.18.75 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 458229237)"
-
-    private const val IG_APP_ID = "936619743392459"
-
-    private val SHORTCODE =
-        Regex("""instagram\.com/(?:[^/?#]+/)?(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)""")
-
-    private const val ALPHABET =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-
-    private val VIDEO_PATTERNS = listOf(
-        Regex("\"video_url\":\"(https:[^\"]+?)\""),
-        Regex("\"video_versions\"\\s*:\\s*\\[\\s*\\{[^{}]*?\"url\"\\s*:\\s*\"(https:[^\"]+?)\""),
-        Regex("property=\"og:video(?::secure_url)?\" content=\"([^\"]+)\""),
-        Regex("<video[^>]+src=\"([^\"]+)\"")
-    )
-
-    private val IMAGE_PATTERN = Regex("\"display_url\":\"(https:[^\"]+?)\"")
-    private val OG_IMAGE = Regex("property=\"og:image\" content=\"([^\"]+)\"")
-
-    private val LOGIN_MARKERS = listOf(
-        "accounts/login",
-        "LoginAndSignupPage",
-        "loginForm"
-    )
-
-    // Private account detection
-    private val PRIVATE_MARKERS = listOf(
-        "\"is_private\":true",
-        "\"isPrivate\":true",
-        "This account is private"
-    )
-
-    private fun isPrivate(body: String) =
-        PRIVATE_MARKERS.any { body.contains(it) }
-
-    private val cookieStore = CookieManager(null, CookiePolicy.ACCEPT_ALL)
-
-    @Volatile
-    private var warmed = false
-
-    private data class Media(val url: String, val isVideo: Boolean)
-
-    private sealed class Route {
-        data class Ok(val media: List<Media>) : Route()
-        data class Fail(val status: Int, val login: Boolean) : Route()
-    }
-
-    private fun clean(s: String) = s
-        .replace("\\u0026", "&")
-        .replace("&amp;", "&")
-        .replace("\\/", "/")
-        .replace("\\u003d", "=")
-
-    private fun sessionCookie(): String = try {
-        WebCookies.getInstance()
-            .getCookie("https://www.instagram.com/")
-            .orEmpty()
-    } catch (e: Exception) {
-        ""
-    }
-
-    private fun ensureCookies() {
-        if (warmed) return
-        warmed = true
-
-        try {
-            CookieHandler.setDefault(cookieStore)
-
-            val c = URL("https://www.instagram.com/")
-                .openConnection() as HttpURLConnection
-
-            prep(c)
-            c.instanceFollowRedirects = true
-            c.inputStream.use { it.readBytes() }
-            c.disconnect()
-
-            Log.d(TAG, "cookies warmed")
-
-        } catch (e: Exception) {
-            Log.d(TAG, "warm fail ${e.message}")
-        }
-    }
-
-    private fun prep(c: HttpURLConnection, ua: String = UA) {
-        c.connectTimeout = 12_000
-        c.readTimeout = 15_000
-
-        c.setRequestProperty("User-Agent", ua)
-        c.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
-        c.setRequestProperty("X-IG-App-ID", IG_APP_ID)
-        c.setRequestProperty("Referer", "https://www.instagram.com/")
-        c.setRequestProperty("Origin", "https://www.instagram.com")
-        c.setRequestProperty("Sec-Fetch-Site", "same-origin")
-        c.setRequestProperty("Sec-Fetch-Mode", "navigate")
-        c.setRequestProperty("Sec-Fetch-Dest", "document")
-        c.setRequestProperty("Upgrade-Insecure-Requests", "1")
-    }
-
-    private fun shortcodeToId(code: String): String? {
-        var n = BigInteger.ZERO
-        val b64 = BigInteger.valueOf(64L)
-
-        for (ch in code) {
-            val i = ALPHABET.indexOf(ch)
-            if (i < 0) return null
-
-            n = n.multiply(b64)
-                .add(BigInteger.valueOf(i.toLong()))
+    suspend fun download(ctx: Context, rawUrl: String): ReelResult = withContext(Dispatchers.IO) {
+        val postUrl = rawUrl.trim()
+        if (!isValidInstagramUrl(postUrl)) {
+            return@withContext ReelResult.Error("Invalid Instagram link. Public Reel, post ya carousel ka poora link paste karo.")
         }
 
-        return n.toString()
-    }
-
-    private fun locationOf(u: String): String? = try {
-        val c = URL(u).openConnection() as HttpURLConnection
-
-        prep(c)
-        c.instanceFollowRedirects = false
-
-        if (c.responseCode in 300..399) {
-            c.getHeaderField("Location")
-        } else {
-            null
-        }
-
-    } catch (e: Exception) {
-        null
-    }
-
-    private fun resolveCode(url: String): String? {
-        val direct = SHORTCODE.find(url)?.groupValues?.get(1)
-
-        if (direct != null && direct.length == 11) return direct
-
-        var current = url
-        var hops = 0
-
-        while (hops < 4) {
-            val next = locationOf(current) ?: break
-
-            current = if (next.startsWith("http")) {
-                next
-            } else {
-                "https://www.instagram.com$next"
-            }
-
-            val code = SHORTCODE.find(current)?.groupValues?.get(1)
-
-            if (code != null && code.length == 11) return code
-
-            hops++
-        }
-
-        return direct
-    }
-
-    suspend fun download(ctx: Context, rawUrl: String): ReelResult =
-        withContext(Dispatchers.IO) {
-
-            val code = resolveCode(rawUrl.trim())
-                ?: return@withContext ReelResult.Error(
-                    "Invalid link. Instagram Reel/Post ka poora URL paste karo."
-                )
-
-            ensureCookies()
-
-            val failures = mutableListOf<Route.Fail>()
-            var found: List<Media>? = null
-
-            when (val r = apiRoute(code)) {
-                is Route.Ok -> found = r.media
-                is Route.Fail -> failures += r
-            }
-
-            if (found == null) {
-                when (val r = pageRoute(code)) {
-                    is Route.Ok -> found = r.media
-                    is Route.Fail -> failures += r
-                }
-            }
-
-            if (found == null) {
-                when (val r = embedRoute(code)) {
-                    is Route.Ok -> found = r.media
-                    is Route.Fail -> failures += r
-                }
-            }
-
-            val list = found
-
-            if (list.isNullOrEmpty()) {
-                Probe.log(
-                    ctx,
-                    "reel fail $code: " +
-                        failures.joinToString {
-                            "s=${it.status} login=${it.login}"
-                        }
-                )
-
-                return@withContext ReelResult.Error(reasonFor(failures))
-            }
-
-            val dir = File(ctx.filesDir, "backup/reel")
-                .apply { mkdirs() }
-
-            val dao = AppDb.get(ctx).dao()
-            val saved = mutableListOf<BackupFile>()
-
-            var failed = 0
-
-            val ordered = list.sortedByDescending { it.isVideo }
-
-            val posterOnly =
-                ordered.count { it.isVideo } == 1 &&
-                ordered.count { !it.isVideo } == 1
-
-            for (m in ordered) {
-
-                Log.d(TAG, "dl video=${m.isVideo} ${m.url.take(90)}")
-
-                if (
-                    posterOnly &&
-                    !m.isVideo &&
-                    saved.any { it.name.endsWith(".mp4") }
-                ) {
-                    Log.d(TAG, "poster skip (video saved)")
-                    continue
-                }
-
-                val file = saveMedia(m.url, dir, m.isVideo)
-
-                if (file == null) {
-                    failed++
-                    continue
-                }
-
-                val bf = BackupFile(
-                    category = "reel",
-                    name = file.name,
-                    path = file.absolutePath,
-                    origModified = System.currentTimeMillis(),
-                    savedAt = System.currentTimeMillis(),
-                    size = file.length(),
-                    isBiz = false
-                )
-
-                dao.insertFile(bf)
-                saved += bf
-            }
-
-            Probe.log(
-                ctx,
-                "reel ok $code saved=${saved.size} failed=$failed of=${list.size}"
+        val apiKey = BuildConfig.INTERAPI_KEY.trim()
+        if (apiKey.isBlank() || apiKey == "YOUR_INTERAPI_KEY") {
+            return@withContext ReelResult.Error(
+                "InterAPI key configure nahi hai. Project ke local.properties mein INTERAPI_KEY add karo, phir app rebuild karo."
             )
-
-            if (saved.isEmpty()) {
-                ReelResult.Error(
-                    "Media URL mile par download fail hua ($failed/${list.size}). “Search in app” se try karo."
-                )
-            } else {
-                ReelResult.Ok(saved)
-            }
         }
 
-    /* ---------------------------- REASON FOR FAILURE ---------------------------- */
+        val response = requestMedia(postUrl, apiKey)
+        if (response.first !in 200..299 || response.second == null) {
+            return@withContext ReelResult.Error(apiError(response.first, response.second))
+        }
 
-    private fun reasonFor(failures: List<Route.Fail>): String {
-        val codes = failures.map { it.status }
+        val media = parseMedia(response.second!!)
+        if (media.isEmpty()) {
+            return@withContext ReelResult.Error("InterAPI ne is post ke liye downloadable media nahi diya. Link public aur available hona chahiye.")
+        }
 
-        return when {
-            codes.any { it == 404 } ->
-                "Post delete ho gayi hai ya ID galat hai."
+        val dir = File(ctx.filesDir, "backup/reel").apply { mkdirs() }
+        val dao = AppDb.get(ctx).dao()
+        val saved = mutableListOf<BackupFile>()
+        var failed = 0
 
-            codes.any { it == 429 } ->
-                "Instagram ne request limit kar di hai. Thodi der baad try karo."
+        // Keep API order (carousel slide order) and save every returned slide.
+        for (item in media) {
+            val file = saveMedia(item.url, dir, item.isVideo)
+            if (file == null) {
+                failed++
+                continue
+            }
+            val now = System.currentTimeMillis()
+            val backup = BackupFile(
+                category = "reel",
+                name = file.name,
+                path = file.absolutePath,
+                origModified = now,
+                savedAt = now,
+                size = file.length(),
+                isBiz = false
+            )
+            dao.insertFile(backup)
+            saved += backup
+        }
 
-            codes.any { it == 401 || it == 403 } ->
-                "Instagram ne request block ki (401/403). “Search in app” se try karo."
-
-            failures.any { it.login } ->
-                "Login maanga ja raha hai. “Search in app” me account se login karke try karo."
-
-            codes.any { it == -1 } ->
-                "Network fail. Internet check karke dobara try karo."
-
-            else ->
-                "Media metadata nahi mila. “Search in app” se try karo — wahan browser se chal jaata hai."
+        Probe.log(ctx, "InterAPI Instagram saved=${saved.size} failed=$failed total=${media.size}")
+        when {
+            saved.isEmpty() -> ReelResult.Error("Media mil gaya lekin file download nahi hui. Dobara try karo; API ke media links expire bhi ho sakte hain.")
+            failed > 0 -> ReelResult.Ok(saved)
+            else -> ReelResult.Ok(saved)
         }
     }
 
-    /* ---------------------------- ROUTE 1: API ---------------------------- */
-
-    private fun apiRoute(code: String): Route {
-        val id = shortcodeToId(code)
-            ?: return Route.Fail(404, false)
-
-        var lastStatus = -1
-
-        for (host in listOf(
-            "https://i.instagram.com",
-            "https://www.instagram.com"
-        )) {
-            for (ua in listOf(APP_UA, UA)) {
-
-                val (status, body) = fetchText(
-                    "$host/api/v1/media/$id/info/",
-                    ua,
-                    "application/json"
-                )
-
-                if (status !in 200..299 || body == null) {
-                    lastStatus = status
-                    continue
-                }
-
-                val parsed = parseApi(body)
-
-                if (parsed != null) return Route.Ok(parsed)
-
-                return Route.Fail(status, false)
-            }
-        }
-
-        return Route.Fail(lastStatus, false)
+    private fun isValidInstagramUrl(value: String): Boolean = try {
+        val u = URL(value)
+        u.protocol == "https" && (u.host == "instagram.com" || u.host.endsWith(".instagram.com")) &&
+            (u.path.contains("/p/") || u.path.contains("/reel/") || u.path.contains("/reels/") || u.path.contains("/tv/"))
+    } catch (_: Exception) {
+        false
     }
 
-    private fun parseApi(body: String): List<Media>? {
+    private fun requestMedia(postUrl: String, apiKey: String): Pair<Int, String?> {
+        var connection: HttpURLConnection? = null
         return try {
-            val items = JSONObject(body).optJSONArray("items")
-                ?: return null
-
-            if (items.length() == 0) return null
-
-            val out = LinkedHashSet<Media>()
-
-            fun bestOf(arr: org.json.JSONArray?): String? {
-                arr ?: return null
-
-                var best: String? = null
-                var bestArea = -1L
-
-                for (i in 0 until arr.length()) {
-                    val v = arr.getJSONObject(i)
-                    val u = v.optString("url")
-
-                    if (u.isEmpty()) continue
-
-                    val area =
-                        v.optInt("width").toLong() *
-                        v.optInt("height").toLong()
-
-                    if (area > bestArea) {
-                        bestArea = area
-                        best = u
-                    }
-                }
-
-                return best
+            val encoded = URLEncoder.encode(postUrl, Charsets.UTF_8.name())
+            connection = (URL("$API_ENDPOINT?url=$encoded").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 20_000
+                readTimeout = 60_000
+                instanceFollowRedirects = true
+                setRequestProperty("X-API-Key", apiKey)
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("User-Agent", UA)
             }
-
-            val item = items.getJSONObject(0)
-
-            Log.d(
-                TAG,
-                "api keys=${item.keys().asSequence().joinToString(",").take(240)}"
-            )
-
-            bestOf(item.optJSONArray("video_versions"))
-                ?.let { out += Media(it, true) }
-
-            item.optJSONArray("carousel_media")?.let { arr ->
-                for (i in 0 until arr.length()) {
-                    val m = arr.getJSONObject(i)
-
-                    bestOf(m.optJSONArray("video_versions"))
-                        ?.let { out += Media(it, true) }
-
-                    bestOf(m.optJSONArray("image_versions2"))
-                        ?.let { out += Media(it, false) }
-                }
-            }
-
-            if (out.isEmpty()) {
-                bestOf(item.optJSONArray("image_versions2"))
-                    ?.let { out += Media(it, false) }
-            }
-
-            Log.d(
-                TAG,
-                "api parsed v=${out.count { it.isVideo }} i=${out.count { !it.isVideo }}"
-            )
-
-            if (out.isEmpty()) {
-                null
-            } else {
-                out.distinctBy { it.url.substringBefore('?') }
-                    .take(20)
-                    .toList()
-            }
-
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() }
+            Log.d(TAG, "InterAPI HTTP $status bodyLength=${body?.length ?: 0}")
+            status to body
         } catch (e: Exception) {
-            Log.d(TAG, "api parse fail: ${e.message}")
-            null
-        }
-    }
-
-    /* ---------------------------- ROUTE 2: PAGE ---------------------------- */
-
-    private fun pageRoute(code: String): Route {
-        val (status, body) = fetchText(
-            "https://www.instagram.com/p/$code/",
-            UA,
-            "text/html,*/*;q=0.8"
-        )
-
-        if (status !in 200..299 || body == null) {
-            return Route.Fail(status, false)
-        }
-
-        val out = LinkedHashSet<Media>()
-
-        VIDEO_PATTERNS.forEach { p ->
-            p.findAll(body).forEach {
-                out += Media(clean(it.groupValues[1]), true)
-            }
-        }
-
-        Log.d(TAG, "page v=${out.size} status=$status")
-
-        // Updated private account detection
-        if (out.isEmpty()) {
-            return Route.Fail(status, isPrivate(body))
-        }
-
-        OG_IMAGE.find(body)?.let {
-            out += Media(clean(it.groupValues[1]), false)
-        }
-
-        return Route.Ok(
-            out.distinctBy { it.url.substringBefore('?') }
-                .take(20)
-                .toList()
-        )
-    }
-
-    /* --------------------------- ROUTE 3: EMBED --------------------------- */
-
-    private fun embedRoute(code: String): Route {
-        var lastStatus = -1
-        var sawLogin = false
-
-        for (attempt in 0..1) {
-
-            for (path in listOf("p", "reel")) {
-
-                val (status, body) = fetchText(
-                    "https://www.instagram.com/$path/$code/embed/captioned/",
-                    UA,
-                    "text/html,*/*;q=0.8"
-                )
-
-                if (status !in 200..299 || body == null) {
-                    lastStatus = status
-                    continue
-                }
-
-                // Updated private/login detection
-                val login = isPrivate(body) ||
-                    (!body.contains("EmbeddedMedia") &&
-                        body.contains("Log in to Instagram"))
-
-                if (login) {
-                    sawLogin = true
-                    continue
-                }
-
-                val parsed = parseEmbed(body)
-
-                Log.d(
-                    TAG,
-                    "embed $path parsed v=${parsed?.count { it.isVideo }} i=${parsed?.count { !it.isVideo }}"
-                )
-
-                if (parsed != null) return Route.Ok(parsed)
-
-                lastStatus = status
-            }
-
-            if (attempt == 0) {
-                warmed = false
-                ensureCookies()
-            }
-        }
-
-        return Route.Fail(lastStatus, sawLogin)
-    }
-
-    private fun parseEmbed(html: String): List<Media>? {
-
-        val main = html.substringBefore(
-            "View more on Instagram",
-            html
-        )
-
-        val out = LinkedHashSet<Media>()
-
-        VIDEO_PATTERNS.forEach { p ->
-            p.findAll(main).forEach {
-                out += Media(clean(it.groupValues[1]), true)
-            }
-        }
-
-        OG_IMAGE.find(main)?.let {
-            out += Media(clean(it.groupValues[1]), false)
-        }
-
-        if (out.none { !it.isVideo }) {
-            IMAGE_PATTERN.findAll(main).forEach {
-                out += Media(clean(it.groupValues[1]), false)
-            }
-        }
-
-        val list = out.distinctBy {
-            it.url.substringBefore('?')
-        }.take(20)
-
-        return list.ifEmpty { null }
-    }
-
-    /* ------------------------------ FETCH ------------------------------ */
-
-    private fun fetchText(
-        pageUrl: String,
-        ua: String,
-        accept: String
-    ): Pair<Int, String?> {
-
-        var c: HttpURLConnection? = null
-
-        return try {
-
-            c = URL(pageUrl).openConnection() as HttpURLConnection
-
-            prep(c, ua)
-            c.instanceFollowRedirects = true
-            c.setRequestProperty("Accept", accept)
-
-            val status = c.responseCode
-
-            if (status !in 200..299) {
-
-                Log.d(TAG, "HTTP $status  $pageUrl")
-                status to null
-
-            } else {
-
-                val body = c.inputStream.bufferedReader().use {
-                    it.readText()
-                }
-
-                Log.d(TAG, "HTTP $status len=${body.length}  $pageUrl")
-
-                status to body
-            }
-
-        } catch (e: Exception) {
-
-            Log.d(TAG, "fetch fail ${e.message}  $pageUrl")
-
+            Log.e(TAG, "InterAPI request failed", e)
             -1 to null
-
         } finally {
-            try {
-                c?.disconnect()
-            } catch (_: Exception) {
-            }
+            connection?.disconnect()
         }
     }
 
-    private fun saveMedia(
-        url: String,
-        dir: File,
-        isVideo: Boolean
-    ): File? {
-
-        for (ua in listOf(UA, APP_UA)) {
-            val f = saveMediaOnce(url, dir, isVideo, ua)
-
-            if (f != null) return f
+    /** InterAPI may return several quality variants for the same carousel slide.
+     * Keep the largest resolution for each media URL path, preserving slide order.
+     */
+    private fun parseMedia(body: String): List<Media> = try {
+        val json = JSONObject(body)
+        if (json.optString("status").equals("error", ignoreCase = true)) return emptyList()
+        val array = json.optJSONArray("media") ?: return emptyList()
+        val bestBySlide = LinkedHashMap<String, Media>()
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            val rawUrl = item.optString("url").takeIf { it.startsWith("https://") }
+                ?: item.optString("download_url").takeIf { it.startsWith("https://") }
+                ?: continue
+            val type = item.optString("type").lowercase()
+            val isVideo = type == "video"
+            if (!isVideo && type != "photo" && type != "image") continue
+            val quality = item.optString("quality")
+            val match = Regex("(\\d+)\\s*x\\s*(\\d+)", RegexOption.IGNORE_CASE).find(quality)
+            val area = if (match != null) {
+                match.groupValues[1].toLongOrNull().orZero() * match.groupValues[2].toLongOrNull().orZero()
+            } else {
+                Regex("(\\d{3,4})p").find(quality)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+            }
+            val pathKey = try { URL(rawUrl).path } catch (_: Exception) { rawUrl.substringBefore('?') }
+            val key = "$type:$pathKey"
+            val candidate = Media(rawUrl, isVideo, area)
+            val previous = bestBySlide[key]
+            if (previous == null || candidate.qualityArea > previous.qualityArea) bestBySlide[key] = candidate
         }
-
-        return null
+        bestBySlide.values.toList()
+    } catch (e: Exception) {
+        Log.e(TAG, "InterAPI response parse failed", e)
+        emptyList()
     }
 
-    private fun saveMediaOnce(
-        url: String,
-        dir: File,
-        isVideo: Boolean,
-        ua: String
-    ): File? {
+    private fun Long?.orZero(): Long = this ?: 0L
 
-        var c: HttpURLConnection? = null
+    private fun apiError(status: Int, body: String?): String {
+        val detail = try { JSONObject(body.orEmpty()).optString("message") } catch (_: Exception) { "" }
+        return when (status) {
+            -1 -> "Network error. Internet connection check karke dobara try karo."
+            400 -> "Instagram link invalid ya unsupported hai."
+            401 -> "InterAPI key missing ya invalid hai. local.properties mein key check karo."
+            402 -> "InterAPI credits khatam ho gaye hain. Dashboard mein balance check karo."
+            403 -> "Ye post private hai ya account disabled hai. Sirf public Instagram posts supported hain."
+            404 -> "Instagram post nahi mili. Ho sakta hai delete ho chuki ho."
+            429 -> "InterAPI rate limit hit ho gayi. Kuch der baad try karo."
+            in 500..599 -> "InterAPI server temporarily unavailable hai. Thodi der baad try karo."
+            else -> detail.takeIf { it.isNotBlank() } ?: "Instagram media fetch nahi ho saka (HTTP $status)."
+        }
+    }
 
-        val tmp = File(
-            dir,
-            "tmp_${UUID.randomUUID().toString().take(8)}"
-        )
-
-        try {
-
-            c = URL(url).openConnection() as HttpURLConnection
-
-            c.connectTimeout = 15_000
-            c.readTimeout = 90_000
-            c.instanceFollowRedirects = true
-
-            c.setRequestProperty("User-Agent", ua)
-            c.setRequestProperty("Referer", "https://www.instagram.com/")
-
-            c.setRequestProperty(
-                "Accept",
-                if (isVideo) {
-                    "video/mp4,video/*;q=0.9,*/*;q=0.8"
-                } else {
-                    "image/webp,image/*,*/*;q=0.8"
-                }
-            )
-
-            c.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
-            c.setRequestProperty("X-IG-App-ID", IG_APP_ID)
-            c.setRequestProperty("Range", "bytes=0-")
-
-            sessionCookie().takeIf {
-                it.isNotEmpty()
-            }?.let {
-                c.setRequestProperty("Cookie", it)
+    private fun saveMedia(url: String, dir: File, isVideo: Boolean): File? {
+        var connection: HttpURLConnection? = null
+        val temp = File(dir, "tmp_${UUID.randomUUID().toString().take(8)}")
+        return try {
+            connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 20_000
+                readTimeout = 90_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", UA)
+                setRequestProperty("Accept", "*/*")
             }
-
-            val status = c.responseCode
-
-            Log.d(TAG, "bin $status $ua ${url.take(80)}")
-
+            val status = connection.responseCode
             if (status !in 200..299) return null
+            val contentType = connection.contentType?.lowercase().orEmpty()
+            if (contentType.startsWith("text/")) return null
 
-            val ctype = c.contentType?.lowercase().orEmpty()
-
-            Log.d(TAG, "bin type=$ctype len=${c.contentLengthLong}")
-
-            if (ctype.startsWith("text/")) {
-                Log.d(TAG, "bin HTML instead of media ($ctype)")
-                return null
-            }
-
-            if (
-                ctype.isNotEmpty() &&
-                !ctype.startsWith("image/") &&
-                !ctype.startsWith("video/")
-            ) {
-                Log.d(TAG, "bin unexpected type $ctype")
-                return null
-            }
-
-            val expected = c.contentLengthLong
+            val expected = connection.contentLengthLong
             var written = 0L
-
-            c.inputStream.use { input ->
-
-                tmp.outputStream().use { output ->
-
-                    val buf = ByteArray(64 * 1024)
-
+            connection.inputStream.use { input ->
+                temp.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
                     while (true) {
-
-                        val n = input.read(buf)
-
-                        if (n <= 0) break
-
-                        output.write(buf, 0, n)
-                        written += n
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        output.write(buffer, 0, count)
+                        written += count
                     }
-
                     output.flush()
                 }
             }
+            if (written <= 0L || (expected > 0L && written != expected)) return null
 
-            if (written <= 0L) {
-                tmp.delete()
-                Log.d(TAG, "bin empty")
-                return null
+            val header = ByteArray(16)
+            val length = FileInputStream(temp).use { it.read(header) }
+            val extension = signatureExt(header, length) ?: return null
+            if (isVideo && extension !in setOf("mp4", "webm")) return null
+            if (!isVideo && extension !in setOf("jpg", "png", "webp")) return null
+
+            val output = File(dir, "ig_${UUID.randomUUID().toString().take(8)}.$extension")
+            if (!temp.renameTo(output)) {
+                temp.copyTo(output, overwrite = true)
+                temp.delete()
             }
-
-            if (expected > 0L && written != expected) {
-                tmp.delete()
-                Log.d(TAG, "bin truncated $written/$expected")
-                return null
-            }
-
-            val head = ByteArray(16)
-
-            val headLen = FileInputStream(tmp).use {
-                it.read(head)
-            }
-
-            val ext = signatureExt(head, headLen) ?: run {
-                tmp.delete()
-                Log.d(TAG, "bin unknown sig")
-                return null
-            }
-
-            val typeOk = if (isVideo) {
-                ext in setOf("mp4", "webm")
-            } else {
-                ext in setOf("jpg", "png", "webp")
-            }
-
-            if (!typeOk) {
-                tmp.delete()
-                Log.d(TAG, "bin type mismatch $ext")
-                return null
-            }
-
-            val out = File(
-                dir,
-                "ig_${UUID.randomUUID().toString().take(8)}.$ext"
-            )
-
-            if (!tmp.renameTo(out)) {
-                tmp.copyTo(out, overwrite = true)
-                tmp.delete()
-            }
-
-            Log.d(TAG, "saved $ext ${out.length()}b")
-
-            return out
-
+            output
         } catch (e: Exception) {
-
-            tmp.delete()
-            Log.d(TAG, "bin fail ${e.message}")
-
-            return null
-
+            Log.w(TAG, "Media download failed: ${e.message}")
+            null
         } finally {
-
-            try {
-                c?.disconnect()
-            } catch (_: Exception) {
-            }
+            temp.delete()
+            connection?.disconnect()
         }
     }
 
-    private fun signatureExt(
-        head: ByteArray,
-        len: Int
-    ): String? {
-
-        fun at(i: Int) =
-            if (i < len) head[i].toInt() and 0xFF else -1
-
-        if (
-            at(0) == 0xFF &&
-            at(1) == 0xD8 &&
-            at(2) == 0xFF
-        ) return "jpg"
-
-        if (
-            at(0) == 0x89 &&
-            at(1) == 0x50 &&
-            at(2) == 0x4E &&
-            at(3) == 0x47
-        ) return "png"
-
-        if (
-            len >= 8 &&
-            String(head, 4, 4, Charsets.US_ASCII) == "ftyp"
-        ) return "mp4"
-
-        if (
-            len >= 12 &&
-            String(head, 0, 4, Charsets.US_ASCII) == "RIFF"
-        ) return "webp"
-
-        if (
-            at(0) == 0x1A &&
-            at(1) == 0x45
-        ) return "webm"
-
+    private fun signatureExt(head: ByteArray, len: Int): String? {
+        fun at(i: Int) = if (i < len) head[i].toInt() and 0xFF else -1
+        if (at(0) == 0xFF && at(1) == 0xD8 && at(2) == 0xFF) return "jpg"
+        if (at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E && at(3) == 0x47) return "png"
+        if (len >= 8 && String(head, 4, 4, Charsets.US_ASCII) == "ftyp") return "mp4"
+        if (len >= 12 && String(head, 0, 4, Charsets.US_ASCII) == "RIFF" && String(head, 8, 4, Charsets.US_ASCII) == "WEBP") return "webp"
+        if (at(0) == 0x1A && at(1) == 0x45) return "webm"
         return null
     }
 }

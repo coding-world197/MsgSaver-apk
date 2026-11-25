@@ -1,0 +1,18 @@
+MsgSaver - InterAPI setup (Android-only; no separate backend)
+
+1. Open the project in Android Studio and wait for Gradle sync.
+2. Open the root-level local.properties file (the same file that contains sdk.dir).
+3. Add this on a new line:
+
+   INTERAPI_KEY=YOUR_INTERAPI_KEY_HERE
+
+4. Replace the placeholder with your InterAPI key. Do not commit or share local.properties.
+5. Sync Gradle, then build and install the app again.
+
+The key is compiled into the APK because this project calls InterAPI directly from Android.
+This means a determined person can extract the key from a distributed APK. Keep usage limits
+and monitor/revoke the key in the InterAPI dashboard if it is exposed. A backend is the only
+reliable way to keep a shared API key secret, but this project intentionally does not add one.
+
+Instagram support: public posts, Reels, and carousels. Private/deleted/unavailable posts are
+not supported by InterAPI. Instagram API requests cost 6 credits per successful response.

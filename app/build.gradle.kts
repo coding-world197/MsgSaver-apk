@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -7,6 +9,16 @@ plugins {
 
 // Release signing: keys come from environment variables (GitHub Secrets).
 // If they are missing, the release build falls back to the debug key so the build never fails.
+val localProps = Properties().apply {
+    val propsFile = rootProject.file("local.properties")
+    if (propsFile.exists()) propsFile.inputStream().use { load(it) }
+}
+val interApiKey = providers.gradleProperty("INTERAPI_KEY")
+    .orElse(providers.environmentVariable("INTERAPI_KEY"))
+    .orElse(localProps.getProperty("INTERAPI_KEY", ""))
+    .get()
+val escapedInterApiKey = interApiKey.replace("\\", "\\\\").replace("\"", "\\\"")
+
 val ksFile: java.io.File? = System.getenv("KEYSTORE_PATH")?.let { file(it) }?.takeIf { it.exists() }
 
 android {
@@ -17,8 +29,9 @@ android {
         minSdk = 29
         targetSdk = 34
         // IMPORTANT: increase versionCode by 1 for every update you release
-        versionCode = 23
-        versionName = "4.1"
+        versionCode = 24
+        versionName = "4.2"
+        buildConfigField("String", "INTERAPI_KEY", "\"$escapedInterApiKey\"")
     }
     signingConfigs {
         if (ksFile != null) {
@@ -40,7 +53,10 @@ android {
         checkReleaseBuilds = false
         abortOnError = false
     }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
