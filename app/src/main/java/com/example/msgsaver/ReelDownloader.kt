@@ -25,7 +25,8 @@ sealed class ReelResult {
  * Public Instagram Reel/Post ka media laata hai. Sirf PUBLIC accounts.
  *
  * Route 1: api/v1/media/{id}/info/    -> JSON
- * Route 2: /p/{code}/embed/captioned/ -> HTML scrape
+ * Route 2: /p/{code}/                -> page HTML (video_versions / og:video)
+ * Route 3: /p/{code}/embed/captioned/ -> embed HTML (last resort)
  *
  * 401/403 se bachne ke liye pehle homepage se cookies li jati hain,
  * aur CDN download par WebView ki cookies bhi bheji jati hain.
@@ -50,11 +51,12 @@ object ReelDownloader {
 
     private val VIDEO_PATTERNS = listOf(
         Regex("\"video_url\":\"(https:[^\"]+?)\""),
+        Regex("\"video_versions\"\\s*:\\s*\\[\\s*\\{[^{}]*?\"url\"\\s*:\\s*\"(https:[^\"]+?)\""),
         Regex("property=\"og:video(?::secure_url)?\" content=\"([^\"]+)\""),
         Regex("<video[^>]+src=\"([^\"]+)\"")
     )
     private val IMAGE_PATTERN = Regex("\"display_url\":\"(https:[^\"]+?)\"")
-    private val SRCSET = Regex("srcset=\"([^\"]+)\"")
+    private val OG_IMAGE = Regex("property=\"og:image\" content=\"([^\"]+)\"")
 
     private val LOGIN_MARKERS = listOf("accounts/login", "LoginAndSignupPage", "loginForm")
 
@@ -159,6 +161,12 @@ object ReelDownloader {
             is Route.Fail -> failures += r
         }
         if (found == null) {
+            when (val r = pageRoute(code)) {
+                is Route.Ok -> found = r.media
+                is Route.Fail -> failures += r
+            }
+        }
+        if (found == null) {
             when (val r = embedRoute(code)) {
                 is Route.Ok -> found = r.media
                 is Route.Fail -> failures += r
@@ -176,7 +184,7 @@ object ReelDownloader {
         val saved = mutableListOf<BackupFile>()
         var failed = 0
 
-        // Video pehle. Ek video + ek image = reel ka poster, duplicate mat banao.
+        // Video pehle. Ek video + ek image = poster, duplicate mat banao.
         val ordered = list.sortedByDescending { it.isVideo }
         val posterOnly = ordered.count { it.isVideo } == 1 && ordered.count { !it.isVideo } == 1
 
@@ -286,7 +294,27 @@ object ReelDownloader {
         }
     }
 
-    /* --------------------------- ROUTE 2: EMBED --------------------------- */
+    /* ---------------------------- ROUTE 2: PAGE ---------------------------- */
+
+    /** Asli post page: yahan video_versions / og:video hote hain, embed par nahi. */
+    private fun pageRoute(code: String): Route {
+        val (status, body) = fetchText(
+            "https://www.instagram.com/p/$code/", UA, "text/html,*/*;q=0.8"
+        )
+        if (status !in 200..299 || body == null) return Route.Fail(status, false)
+
+        val out = LinkedHashSet<Media>()
+        VIDEO_PATTERNS.forEach { p ->
+            p.findAll(body).forEach { out += Media(clean(it.groupValues[1]), true) }
+        }
+        Log.d(TAG, "page v=${out.size} status=$status")
+        if (out.isEmpty()) return Route.Fail(status, body.contains("accounts/login"))
+
+        OG_IMAGE.find(body)?.let { out += Media(clean(it.groupValues[1]), false) }
+        return Route.Ok(out.distinctBy { it.url.substringBefore('?') }.take(20).toList())
+    }
+
+    /* --------------------------- ROUTE 3: EMBED --------------------------- */
 
     private fun embedRoute(code: String): Route {
         var lastStatus = -1
@@ -313,27 +341,19 @@ object ReelDownloader {
     }
 
     private fun parseEmbed(html: String): List<Media>? {
+        // Footer ke baad "More posts" grid aata hai — wahan se cut kar do
+        val main = html.substringBefore("View more on Instagram", html)
         val out = LinkedHashSet<Media>()
 
         VIDEO_PATTERNS.forEach { p ->
-            p.findAll(html).forEach { out += Media(clean(it.groupValues[1]), true) }
+            p.findAll(main).forEach { out += Media(clean(it.groupValues[1]), true) }
         }
 
-        val bigImages = LinkedHashSet<String>()
-        SRCSET.findAll(html).forEach { m ->
-            val best = m.groupValues[1].split(',').mapNotNull { part ->
-                val bits = part.trim().split(Regex("\\s+"))
-                val u = bits.getOrNull(0) ?: return@mapNotNull null
-                if (!u.startsWith("https")) return@mapNotNull null
-                val w = bits.getOrNull(1)?.removeSuffix("w")?.toIntOrNull() ?: 0
-                w to u
-            }.maxByOrNull { it.first }
-            best?.let { bigImages += clean(it.second) }
+        // Sirf main post ka poster. srcset nahi, warna grid ke thumbnails bhi aa jaate hain.
+        OG_IMAGE.find(main)?.let { out += Media(clean(it.groupValues[1]), false) }
+        if (out.none { !it.isVideo }) {
+            IMAGE_PATTERN.findAll(main).forEach { out += Media(clean(it.groupValues[1]), false) }
         }
-        if (bigImages.isEmpty()) {
-            IMAGE_PATTERN.findAll(html).forEach { bigImages += clean(it.groupValues[1]) }
-        }
-        bigImages.forEach { out += Media(it, false) }
 
         val list = out.distinctBy { it.url.substringBefore('?') }.take(20)
         return list.ifEmpty { null }
