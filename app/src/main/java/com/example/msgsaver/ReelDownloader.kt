@@ -8,6 +8,9 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.math.BigInteger
+import java.net.CookieHandler
+import java.net.CookieManager
+import java.net.CookiePolicy
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
@@ -20,11 +23,11 @@ sealed class ReelResult {
 /**
  * Public Instagram Reel/Post ka media laata hai. Sirf PUBLIC accounts.
  *
- * Route 1: api/v1/media/{id}/info/    -> JSON
- * Route 2: /p/{code}/embed/captioned/ -> HTML scrape
+ * Route 1: api/v1/media/{id}/info/    -> JSON  (i.instagram.com pehle)
+ * Route 2: /p/{code}/embed/captioned/ -> HTML scrape (retry ke saath)
  *
- * Dono fail hone par bhi "private account" nahi kaha jata - har failure ka
- * apna reason hai (404, 429, login redirect, network, metadata missing).
+ * 401/403 se bachne ke liye pehle homepage se cookies li jati hain.
+ * Dono fail hone par bhi "private account" nahi kaha jata.
  */
 object ReelDownloader {
 
@@ -54,6 +57,9 @@ object ReelDownloader {
 
     private val LOGIN_MARKERS = listOf("accounts/login", "LoginAndSignupPage", "loginForm")
 
+    private val cookieStore = CookieManager(null, CookiePolicy.ACCEPT_ALL)
+    @Volatile private var warmed = false
+
     private data class Media(val url: String, val isVideo: Boolean)
 
     private sealed class Route {
@@ -63,6 +69,23 @@ object ReelDownloader {
 
     private fun clean(s: String) = s.replace("\\u0026", "&").replace("\\/", "/")
 
+    /** Ek baar homepage se cookies (csrftoken/mid) le lo — 401/403 ka bada sabab missing cookies hain. */
+    private fun ensureCookies() {
+        if (warmed) return
+        warmed = true
+        try {
+            CookieHandler.setDefault(cookieStore)
+            val c = URL("https://www.instagram.com/").openConnection() as HttpURLConnection
+            prep(c)
+            c.instanceFollowRedirects = true
+            c.inputStream.use { it.readBytes() }
+            c.disconnect()
+            Log.d(TAG, "cookies warmed")
+        } catch (e: Exception) {
+            Log.d(TAG, "warm fail ${e.message}")
+        }
+    }
+
     private fun prep(c: HttpURLConnection, ua: String = UA) {
         c.connectTimeout = 12_000
         c.readTimeout = 15_000
@@ -70,6 +93,11 @@ object ReelDownloader {
         c.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
         c.setRequestProperty("X-IG-App-ID", IG_APP_ID)
         c.setRequestProperty("Referer", "https://www.instagram.com/")
+        c.setRequestProperty("Origin", "https://www.instagram.com")
+        c.setRequestProperty("Sec-Fetch-Site", "same-origin")
+        c.setRequestProperty("Sec-Fetch-Mode", "navigate")
+        c.setRequestProperty("Sec-Fetch-Dest", "document")
+        c.setRequestProperty("Upgrade-Insecure-Requests", "1")
     }
 
     private fun shortcodeToId(code: String): String? {
@@ -110,6 +138,8 @@ object ReelDownloader {
     suspend fun download(ctx: Context, rawUrl: String): ReelResult = withContext(Dispatchers.IO) {
         val code = resolveCode(rawUrl.trim())
             ?: return@withContext ReelResult.Error("Invalid link. Instagram Reel/Post ka poora URL paste karo.")
+
+        ensureCookies()
 
         val failures = mutableListOf<Route.Fail>()
 
@@ -164,7 +194,7 @@ object ReelDownloader {
             failures.any { it.login } -> "Yeh account private hai (login maang raha hai)."
             codes.any { it == 404 } -> "Post delete ho gayi hai ya ID galat hai."
             codes.any { it == 429 } -> "Instagram ne request limit kar di hai. Thodi der baad try karo."
-            codes.any { it == 401 || it == 403 } -> "Instagram ne request block ki (403/401)."
+            codes.any { it == 401 || it == 403 } -> "Instagram ne request block ki (403/401). WiFi/data switch karke ya thodi der baad try karo."
             codes.any { it == -1 } -> "Network fail. Internet check karke dobara try karo."
             else -> "Media metadata nahi mila. Instagram ka response badal gaya ho sakta hai — " +
                 "private account zaroori nahi. Thodi der baad try karo."
@@ -176,13 +206,14 @@ object ReelDownloader {
     private fun apiRoute(code: String): Route {
         val id = shortcodeToId(code) ?: return Route.Fail(404, false)
         var lastStatus = -1
-        for (ua in listOf(UA, APP_UA)) {
-            val (status, body) = fetchText("https://www.instagram.com/api/v1/media/$id/info/", ua, "application/json")
-            if (status !in 200..299 || body == null) { lastStatus = status; continue }
-
-            val parsed = parseApi(body)
-            if (parsed != null) return Route.Ok(parsed)
-            return Route.Fail(status, false) // 200 par JSON khaali
+        for (host in listOf("https://i.instagram.com", "https://www.instagram.com")) {
+            for (ua in listOf(APP_UA, UA)) {
+                val (status, body) = fetchText("$host/api/v1/media/$id/info/", ua, "application/json")
+                if (status !in 200..299 || body == null) { lastStatus = status; continue }
+                val parsed = parseApi(body)
+                if (parsed != null) return Route.Ok(parsed)
+                return Route.Fail(status, false)
+            }
         }
         return Route.Fail(lastStatus, false)
     }
@@ -248,18 +279,21 @@ object ReelDownloader {
         var lastStatus = -1
         var sawLogin = false
 
-        for (path in listOf("p", "reel")) {
-            val (status, body) = fetchText(
-                "https://www.instagram.com/$path/$code/embed/captioned/", UA, "text/html,*/*;q=0.8"
-            )
-            if (status !in 200..299 || body == null) { lastStatus = status; continue }
+        for (attempt in 0..1) {
+            for (path in listOf("p", "reel")) {
+                val (status, body) = fetchText(
+                    "https://www.instagram.com/$path/$code/embed/captioned/", UA, "text/html,*/*;q=0.8"
+                )
+                if (status !in 200..299 || body == null) { lastStatus = status; continue }
 
-            val login = LOGIN_MARKERS.any { body.contains(it) } && !body.contains("video_url")
-            if (login) { sawLogin = true; continue }
+                val login = LOGIN_MARKERS.any { body.contains(it) } && !body.contains("video_url")
+                if (login) { sawLogin = true; continue }
 
-            val parsed = parseEmbed(body)
-            if (parsed != null) return Route.Ok(parsed)
-            lastStatus = status
+                val parsed = parseEmbed(body)
+                if (parsed != null) return Route.Ok(parsed)
+                lastStatus = status
+            }
+            if (attempt == 0) ensureCookies()
         }
         return Route.Fail(lastStatus, sawLogin)
     }
