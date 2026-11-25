@@ -30,8 +30,8 @@ import java.util.UUID
 import java.util.concurrent.CopyOnWriteArraySet
 
 /**
- * In-app browser. Link khulta hai, player jo real CDN link maangta hai wo pakadta hai,
- * phir download karta hai. Private post ho to user yahan login kar sakta hai.
+ * In-app browser. Desktop UA par Instagram asli <video src=".mp4"> deta hai,
+ * player ko force play karke wahi URL pakda jata hai.
  */
 class ReelWebActivity : Activity() {
 
@@ -42,6 +42,7 @@ class ReelWebActivity : Activity() {
     private val videos = CopyOnWriteArraySet<String>()
     private val images = CopyOnWriteArraySet<String>()
     private val ui = Handler(Looper.getMainLooper())
+    private var ticks = 0
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(b: Bundle?) {
@@ -83,26 +84,38 @@ class ReelWebActivity : Activity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
+            useWideViewPort = true
+            loadWithOverviewMode = true
             cacheMode = WebSettings.LOAD_DEFAULT
+            // Desktop UA — mobile layout par player JS ke peeche chhupa rehta hai
+            userAgentString =
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         }
 
         web.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
                 val u = r.url.toString()
-                if (u.contains(".mp4")) addVideo(u)
+                if (u.contains(".mp4") || u.contains("/v/t2/")) addVideo(u)
                 return null
             }
 
             override fun onPageFinished(v: WebView, u: String) {
                 super.onPageFinished(v, u)
-                probe()
-                ui.postDelayed({ probe() }, 1500)
-                ui.postDelayed({ probe() }, 3500)
-                refresh()
+                ticks = 0
+                kick()
             }
         }
 
         web.loadUrl(url)
+    }
+
+    /** Har 1s par player ko kick + probe, 12 tak. */
+    private fun kick() {
+        if (ticks > 12) return
+        ticks++
+        web.evaluateJavascript(KICK_JS) { }
+        probe()
+        ui.postDelayed({ kick() }, 1000)
     }
 
     private fun addVideo(u: String) {
@@ -124,7 +137,7 @@ class ReelWebActivity : Activity() {
             val arr = JSONArray(unquoted)
             for (i in 0 until arr.length()) {
                 val u = arr.optString(i)
-                if (u.isEmpty()) continue
+                if (u.isEmpty() || u.startsWith("blob:")) continue
                 if (u.contains(".mp4")) videos.add(u) else images.add(u)
             }
             refresh()
@@ -132,16 +145,21 @@ class ReelWebActivity : Activity() {
     }
 
     private fun refresh() {
-        dl.isEnabled = videos.isNotEmpty() || images.isNotEmpty()
+        dl.isEnabled = videos.isNotEmpty()
         status.text = when {
             videos.isNotEmpty() -> "${videos.size} video mila. Download dabao."
-            images.isNotEmpty() -> "${images.size} photo mila. Download dabao."
-            else -> "Video load ho raha hai... play dabao"
+            images.isNotEmpty() -> "Poster mila, video load ho raha hai..."
+            else -> "Video dhoondh rahe hain..."
         }
     }
 
     private fun save() {
-        val list = videos.map { it to true } + images.map { it to false }
+        // Sirf videos; video na ho to carousel photos
+        val list = if (videos.isNotEmpty()) {
+            videos.map { it to true }
+        } else {
+            images.map { it to false }
+        }
         val unique = list.distinctBy { it.first.substringBefore('?') }.take(20)
         if (unique.isEmpty()) return
 
@@ -157,7 +175,7 @@ class ReelWebActivity : Activity() {
             for ((mediaUrl, isVideo) in unique) {
                 val name = "ig_${UUID.randomUUID().toString().take(8)}.${if (isVideo) "mp4" else "jpg"}"
                 val out = File(dir, name)
-                if (!pull(mediaUrl, out, cookie) || out.length() == 0L) {
+                if (!pull(mediaUrl, out, cookie, isVideo) || out.length() == 0L) {
                     out.delete()
                     continue
                 }
@@ -173,28 +191,40 @@ class ReelWebActivity : Activity() {
 
             ui.post {
                 Toast.makeText(this@ReelWebActivity, "$ok saved", Toast.LENGTH_SHORT).show()
-                setResult(Activity.RESULT_OK, Intent())
-                finish()
+                if (ok > 0) {
+                    setResult(Activity.RESULT_OK, Intent())
+                    finish()
+                } else {
+                    dl.isEnabled = videos.isNotEmpty()
+                    status.text = "Download fail. Player par tap karke dobara try karo."
+                }
             }
         }
     }
 
-    private fun pull(url: String, out: File, cookie: String): Boolean = try {
+    private fun pull(url: String, out: File, cookie: String, isVideo: Boolean): Boolean = try {
         val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 15_000
-        c.readTimeout = 60_000
+        c.readTimeout = 90_000
         c.setRequestProperty(
             "User-Agent",
-            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         )
         c.setRequestProperty("Referer", "https://www.instagram.com/")
+        c.setRequestProperty("Accept", if (isVideo) "video/mp4,video/*,*/*;q=0.8" else "image/*,*/*;q=0.8")
+        c.setRequestProperty("X-IG-App-ID", "936619743392459")
+        c.setRequestProperty("Range", "bytes=0-")
         if (cookie.isNotEmpty()) c.setRequestProperty("Cookie", cookie)
-        if (c.responseCode !in 200..299) false
+        val st = c.responseCode
+        if (st !in 200..299) { android.util.Log.d("REEL", "pull HTTP $st"); false }
         else {
             c.inputStream.use { i -> out.outputStream().use { o -> i.copyTo(o, 64 * 1024) } }
             true
         }
-    } catch (e: Exception) { false }
+    } catch (e: Exception) {
+        android.util.Log.d("REEL", "pull fail ${e.message}")
+        false
+    }
 
     override fun onBackPressed() {
         if (web.canGoBack()) web.goBack() else super.onBackPressed()
@@ -207,11 +237,24 @@ class ReelWebActivity : Activity() {
     }
 
     companion object {
+        /** Player force play: overlay hatao, video unmute+play, poster par tap. */
+        private const val KICK_JS = """
+            (function(){
+              document.querySelectorAll('[aria-label="Close"],[aria-label="Close modal"]').forEach(function(b){ b.click(); });
+              document.querySelectorAll('video').forEach(function(v){
+                try { v.muted = true; if (v.paused) v.play(); } catch(e){}
+              });
+              var p = document.querySelector('.EmbeddedMediaImage, img[srcset*="cdninstagram"], [aria-label="Play"]');
+              if (p) try { p.click(); } catch(e){}
+            })()
+        """
+
         private const val PROBE_JS = """
             (function(){
               var out = [];
               document.querySelectorAll('video').forEach(function(v){
                 if (v.src) out.push(v.src);
+                if (v.currentSrc) out.push(v.currentSrc);
                 v.querySelectorAll('source').forEach(function(s){ if (s.src) out.push(s.src); });
               });
               var vg = document.querySelector('meta[property="og:video"]');
