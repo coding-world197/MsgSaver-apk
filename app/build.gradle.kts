@@ -29,8 +29,8 @@ android {
         minSdk = 29
         targetSdk = 34
         // IMPORTANT: increase versionCode by 1 for every update you release
-        versionCode = 26
-        versionName = "4.3"
+        versionCode = 27
+        versionName = "4.4"
         buildConfigField("String", "INTERAPI_KEY", "\"$escapedInterApiKey\"")
     }
     signingConfigs {
