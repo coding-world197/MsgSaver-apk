@@ -665,6 +665,9 @@ private const val HINT_WA =
 private const val HINT_BIZ =
     "content://com.android.externalstorage.documents/document/primary%3AAndroid%2Fmedia%2Fcom.whatsapp.w4b%2FWhatsApp%20Business%2FMedia"
 
+// Yahan apna GitHub Pages wala privacy policy link daalo
+private const val PRIVACY_URL = "https://your-username.github.io/chatrewind-privacy/"
+
 /** Returns a function that opens the system folder picker. Argument: true = WhatsApp Business. */
 @Composable
 fun rememberFolderPicker(onDone: () -> Unit): (Boolean) -> Unit {
@@ -869,8 +872,38 @@ fun SettingsScreen() {
             }
         }
 
+        AppCard {
+            Column(Modifier.padding(16.dp)) {
+                Text("Legal & attribution", fontWeight = FontWeight.Bold)
+                Text(
+                    "ChatRewind is not affiliated with, endorsed by or sponsored by WhatsApp, " +
+                        "Meta Platforms or Instagram. All trademarks belong to their respective owners. " +
+                        "The app only reads media already present on your own device, or public web pages " +
+                        "you open yourself, and keeps a personal-use copy. No login, no server, no upload.",
+                    fontSize = 12.sp, color = cs.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        ctx.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_URL))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }) { Text("Privacy policy") }
+                    OutlinedButton(onClick = {
+                        ctx.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse("https://www.whatsapp.com/legal/terms-of-service"))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }) { Text("WhatsApp terms") }
+                }
+            }
+        }
+
         Text(
-            "Privacy: your messages, statuses and voice messages stay on your phone. The internet is used only to check for a new version. This app is separate from WhatsApp and is not part of it.",
+            "Privacy: your messages, statuses and voice messages stay on your phone. The internet is used only " +
+                "to download links you request and to check for a new version. Nothing is uploaded to any server. " +
+                "This app is separate from WhatsApp and Instagram and is not part of them.",
             fontSize = 12.sp, color = cs.onSurfaceVariant
         )
         Spacer(Modifier.height(8.dp))
