@@ -666,7 +666,7 @@ private const val HINT_BIZ =
     "content://com.android.externalstorage.documents/document/primary%3AAndroid%2Fmedia%2Fcom.whatsapp.w4b%2FWhatsApp%20Business%2FMedia"
 
 // Yahan apna GitHub Pages wala privacy policy link daalo
-private const val PRIVACY_URL = "https://your-username.github.io/chatrewind-privacy/"
+private const val PRIVACY_URL = "https://coding-world197.github.io/chatrewind-privacy/"
 
 /** Returns a function that opens the system folder picker. Argument: true = WhatsApp Business. */
 @Composable
